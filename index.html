@@ -160,7 +160,7 @@ function render() {
     <nav>${TABS.map(([k,i,l]) => `<button class="${S.tab===k?"on":""}" onclick="go('${k}')"><span class="i">${i}</span>${l}</button>`).join("")}</nav>`;
   views[S.tab]();
 }
-const go = t => { S.tab = t; S.sel = S.add = null; render(); };
+const go = t => { S.tab = t; S.sel = S.add = S.ed = null; render(); };
 const fmt = n => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(n || 0);
 const today = () => new Date().toISOString().slice(0, 10);
 const V = h => ($("#view").innerHTML = h);
@@ -189,14 +189,14 @@ function donut(items) {
   return `<div class="donutw"><svg viewBox="0 0 42 42" width="130" height="130">${segs}</svg><div class="leg">${items.map((x, i) => `<div><i style="background:${C[i % 8]}"></i>${esc(x.n)}<b>${Math.round(x.v / T * 100)}%</b></div>`).join("")}</div></div>`;
 }
 function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
-function sheet(title, label, cb) {
+function sheet(title, label, cb, def) {
   const d = document.createElement("div"); d.className = "ov";
   d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
   document.body.appendChild(d);
   const c = () => d.remove(); d.onclick = e => { if (e.target === d) c(); };
   $("#no").onclick = c;
   $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; c(); await cb(a); };
-  $("#sv").focus();
+  if (def !== undefined) $("#sv").value = def; $("#sv").focus();
 }
 
 const views = {
@@ -242,16 +242,48 @@ const views = {
 
 async function detail(id) {
   V("טוען…");
-  const x = (await loadAll()).find(r => r.id === id);
+  const [all, tr, va] = await Promise.all([loadAll(),
+    SB.from("transactions").select("id,kind,amount,occurred_on").eq("investment_id", id),
+    SB.from("valuations").select("id,value,as_of").eq("investment_id", id)]);
+  const x = all.find(r => r.id === id);
   if (!x) { S.sel = null; return render(); }
+  S.cur = x;
+  const ev = [...(tr.data || []).map(e => ({ t: "tx", id: e.id, l: e.kind === "deposit" ? "הפקדה" : "משיכה", a: Number(e.amount), d: e.occurred_on })),
+    ...(va.data || []).map(e => ({ t: "val", id: e.id, l: "עדכון שווי", a: Number(e.value), d: e.as_of }))].sort((a, b) => b.d.localeCompare(a.d));
+  const row = e => `<div style="display:flex;align-items:center;gap:8px;padding:12px 0;border-top:1px solid var(--line)">
+    <div style="flex:1;cursor:pointer" onclick="editEv('${e.t}','${e.id}',${e.a})"><b>${e.l}</b><div class="muted">${esc(e.d)}</div></div>
+    <b>${fmt(e.a)}</b><button class="ghost" style="width:auto;margin:0;padding:6px 10px" onclick="delEv('${e.t}','${e.id}')" aria-label="מחיקה">✕</button></div>`;
   V(`<button class="ghost" onclick="S.sel=null;render()">→ חזרה</button>
     <div class="card" style="margin-top:12px"><h2>${esc(x.name)}</h2><div class="big">${fmt(x.val)}</div>
       <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: הוזן ידנית" : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
       <p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
-    <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>`);
+    <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>
+    <div class="card" style="margin-top:14px"><h2>היסטוריה</h2>${ev.length ? ev.map(row).join("") : '<div class="muted">אין עדיין תנועות.</div>'}
+      ${ev.length ? '<div class="muted" style="margin-top:8px">הקשה על שורה לעריכת הסכום.</div>' : ""}</div>
+    <button class="ghost" onclick="S.ed=S.cur;S.sel=null;S.add=1;render()">עריכת פרטי ההשקעה</button>
+    <button class="ghost" style="color:var(--bad)" onclick="delInv('${id}')">מחיקת ההשקעה</button>`);
 }
+function editEv(t, id, cur) {
+  sheet(t === "tx" ? "עריכת תנועה" : "עריכת שווי", "סכום (₪)", async a => {
+    if (t === "tx" && a === 0) return;
+    const r = t === "tx" ? await SB.from("transactions").update({ amount: a }).eq("id", id) : await SB.from("valuations").update({ value: a }).eq("id", id);
+    toast(r.error ? r.error.message : "עודכן ✓"); render();
+  }, cur);
+}
+async function delEv(t, id) {
+  if (!confirm("למחוק את הרשומה?")) return;
+  const r = await SB.from(t === "tx" ? "transactions" : "valuations").delete().eq("id", id);
+  toast(r.error ? r.error.message : "נמחק"); render();
+}
+async function delInv(id) {
+  if (!confirm("למחוק את ההשקעה וכל ההיסטוריה שלה? אי אפשר לשחזר.")) return;
+  const r = await SB.from("investments").delete().eq("id", id);
+  if (r.error) return alert(r.error.message);
+  S.sel = null; toast("נמחק"); render();
+}
+function cancelForm() { const e = S.ed; S.add = 0; S.ed = null; S.dn = ""; S.sel = e ? e.id : null; render(); }
 function act(id, kind) {
   const T = { deposit: ["הפקדה", "סכום ההפקדה (₪)"], withdrawal: ["משיכה", "סכום המשיכה (₪)"], valuation: ["עדכון שווי", "השווי הנוכחי (₪)"] }[kind];
   sheet(T[0], T[1], async a => {
@@ -269,9 +301,9 @@ async function addForm() {
     SB.from("institutions").select("id,name").order("name"), SB.from("asset_types").select("id,name").order("name"),
     SB.from("household_members").select("user_id,display_name")]);
   const empty = !(ins.data || []).length && !(ty.data || []).length;
-  V(`<button class="ghost" onclick="S.add=0;render()">→ ביטול</button>
-    <div class="card" style="margin-top:12px"><h2>השקעה חדשה</h2>
-    <label>שם</label><input id="f_n" value="${esc(S.dn || "")}">
+  V(`<button class="ghost" onclick="cancelForm()">→ ביטול</button>
+    <div class="card" style="margin-top:12px"><h2>${S.ed ? "עריכת השקעה" : "השקעה חדשה"}</h2>
+    <label>שם</label><input id="f_n" value="${esc(S.dn || (S.ed && S.ed.name) || "")}">
     ${empty ? `<button class="ghost" onclick="seed()">הוסף רשימה מוכנה של בתי השקעות וסוגים</button><br><br>` : ""}
     <label>בית השקעות</label><select id="f_i"><option value="">—</option>${opt(ins.data, "id", "name")}</select>
     <button class="ghost" onclick="newItem('institutions')">➕ בית השקעות חדש</button><br><br>
@@ -282,6 +314,8 @@ async function addForm() {
     <label>מסלול (אופציונלי)</label><input id="f_k">
     <label>דמי ניהול שנתיים באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
     <button onclick="saveInv()">שמירה</button></div>`);
+  if (S.ed) { const e = S.ed; $("#f_i").value = e.institution_id || ""; $("#f_t").value = e.type_id || ""; $("#f_o").value = e.owner_user_id || "";
+    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
 }
 async function newItem(tbl) {
   S.dn = $("#f_n").value;
@@ -299,11 +333,13 @@ async function seed() {
 }
 async function saveInv() {
   const n = $("#f_n").value.trim(); if (!n) return alert("יש להזין שם");
-  const r = await SB.from("investments").insert({ household_id: S.m.household_id, name: n,
-    institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
-    horizon: $("#f_h").value, track: $("#f_k").value || null, fee_pct: parseFloat($("#f_f").value) || null });
+  const row = { name: n, institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
+    horizon: $("#f_h").value, track: $("#f_k").value || null, fee_pct: parseFloat($("#f_f").value) || null };
+  const r = S.ed ? await SB.from("investments").update(row).eq("id", S.ed.id)
+                 : await SB.from("investments").insert({ household_id: S.m.household_id, ...row });
   if (r.error) return alert(r.error.message);
-  S.add = 0; S.dn = ""; render();
+  const back = S.ed ? S.ed.id : null;
+  S.add = 0; S.ed = null; S.dn = ""; S.sel = back; toast("נשמר ✓"); render();
 }
 
 boot();
