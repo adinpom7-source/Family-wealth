@@ -11,32 +11,53 @@
 <meta name="apple-mobile-web-app-title" content="הון">
 <meta name="theme-color" content="#0f766e">
 <style>
-:root{--bg:#f5f6f8;--card:#fff;--text:#12202b;--muted:#6b7a88;--line:#e3e7eb;--accent:#0f766e;--on:#fff;--bad:#b42318}
-:root[data-theme=dark]{--bg:#0e1419;--card:#171f27;--text:#eaf0f5;--muted:#8b9aa8;--line:#25303a;--accent:#2dd4bf;--on:#06231f;--bad:#f97066}
-*{box-sizing:border-box}
+:root{--bg:#f3f5f7;--card:#fff;--text:#0f1b24;--muted:#6b7885;--line:#e5e9ed;--accent:#0f766e;--on:#fff;--bad:#c2410c;--sh:0 1px 2px #0000000a,0 6px 20px #0f1b240d}
+:root[data-theme=dark]{--bg:#0b1115;--card:#141c23;--text:#eaf0f5;--muted:#8b9aa8;--line:#222d37;--accent:#2dd4bf;--on:#04201c;--bad:#fb923c;--sh:none}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{margin:0;height:100%}
-body{background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+body{background:var(--bg);color:var(--text);font:16px/1.5 Heebo,system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
 #app{min-height:100%;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
-header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px}
-header h1{font-size:18px;margin:0}
-main{flex:1;padding:6px 16px 96px;max-width:640px;width:100%;margin:0 auto}
-.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px 8px}
+header h1{font-size:20px;font-weight:700;margin:0}
+main{flex:1;padding:6px 16px 100px;max-width:640px;width:100%;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:20px;padding:18px;margin-bottom:12px;box-shadow:var(--sh)}
 .muted{color:var(--muted);font-size:14px}
 .big{font-size:34px;font-weight:700;letter-spacing:-.5px}
-h2{font-size:17px;margin:0 0 10px}
-input{width:100%;padding:13px 14px;margin:6px 0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}
-button{font:inherit;cursor:pointer;border:0;border-radius:12px;padding:13px 16px;background:var(--accent);color:var(--on);font-weight:600;width:100%;margin-top:4px}
+.n{font-size:20px;font-weight:700}
+h2{font-size:17px;font-weight:700;margin:0 0 12px}
+label{font-size:14px;color:var(--muted)}
+input,select{width:100%;padding:14px;margin:6px 0 10px;border-radius:14px;border:1px solid var(--line);background:var(--bg);color:var(--text);font:inherit}
+input:focus,select:focus{outline:2px solid var(--accent);border-color:transparent}
+button{font:inherit;cursor:pointer;border:0;border-radius:14px;padding:14px 16px;background:var(--accent);color:var(--on);font-weight:700;width:100%;margin-top:6px;transition:transform .1s}
+button:active{transform:scale(.98)}
 button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
 button.icon{width:auto;padding:8px 12px;margin:0}
 .err{color:var(--bad);font-size:14px;min-height:20px}
 .wrap{max-width:420px;margin:0 auto;padding:28px 18px}
+.row{display:flex;gap:12px}.row .card{flex:1}
+.card[onclick]{cursor:pointer}
 nav{position:fixed;bottom:0;inset-inline:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
-nav button{flex:1;background:none;color:var(--muted);margin:0;padding:8px 2px;font-size:12px;font-weight:500;display:flex;flex-direction:column;align-items:center;gap:2px}
-nav button .i{font-size:20px}
+nav button{flex:1;background:none;color:var(--muted);margin:0;padding:8px 2px;font-size:12px;font-weight:500;display:flex;flex-direction:column;align-items:center;gap:2px;border-radius:12px}
+nav button .i{font-size:21px}
 nav button.on{color:var(--accent);font-weight:700}
 .code{font:700 22px ui-monospace,monospace;letter-spacing:2px;direction:ltr;text-align:center;padding:10px;background:var(--bg);border-radius:12px}
-.row{display:flex;gap:10px}.row .card{flex:1}.card[onclick]{cursor:pointer}select{width:100%;padding:13px 14px;margin:6px 0 8px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}label{font-size:14px;color:var(--muted)}
+.hero{background:linear-gradient(135deg,#0f766e,#0e9f8e);color:#fff;border-radius:24px;padding:22px;margin-bottom:12px;box-shadow:0 10px 30px #0f766e40}
+:root[data-theme=dark] .hero{background:linear-gradient(135deg,#115e59,#0f766e);box-shadow:none}
+.hero .lbl{opacity:.85;font-size:14px}.hero .sm{font-size:12px;opacity:.7;margin-top:10px}
+.hbig{font-size:42px;font-weight:800;letter-spacing:-1px;line-height:1.15;margin:2px 0 10px}
+.chip{display:inline-block;padding:4px 12px;border-radius:999px;background:#ffffff26;font-weight:600;font-size:14px}
+.seg{display:flex;gap:6px;overflow-x:auto;margin-bottom:12px;padding-bottom:2px}
+.seg button{width:auto;white-space:nowrap;margin:0;padding:8px 16px;background:var(--card);color:var(--muted);border:1px solid var(--line);border-radius:999px;font-weight:600;font-size:14px}
+.seg button.on{background:var(--accent);color:var(--on);border-color:transparent}
+.donutw{display:flex;align-items:center;gap:18px}
+.leg{flex:1;font-size:14px}.leg div{display:flex;align-items:center;gap:8px;margin:5px 0}.leg b{margin-inline-start:auto}
+.leg i{width:10px;height:10px;border-radius:3px;flex:none}
+.ov{position:fixed;inset:0;background:#0008;display:flex;align-items:flex-end;z-index:20}
+.sh{background:var(--card);width:100%;max-width:640px;margin:0 auto;border-radius:24px 24px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom));animation:up .22s ease}
+@keyframes up{from{transform:translateY(50px);opacity:0}}
+.toast{position:fixed;bottom:92px;inset-inline:0;margin:auto;width:max-content;max-width:90%;background:var(--text);color:var(--bg);padding:10px 18px;border-radius:14px;z-index:30;font-weight:600}
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
 <body>
 <div id="app"></div>
@@ -157,17 +178,47 @@ async function loadAll() {
   return i.data.map(r => { const d = dep[r.id] || 0, l = val[r.id]; return { ...r, dep: d, val: l ? Number(l.value) : d, asOf: l && l.as_of, hasVal: !!l }; });
 }
 
+async function members() {
+  if (!S.mem) { const r = await SB.from("household_members").select("user_id,display_name"); S.mem = r.data || []; }
+  return S.mem;
+}
+function donut(items) {
+  const T = items.reduce((a, x) => a + x.v, 0), C = ["#0f766e", "#14b8a6", "#6366f1", "#f59e0b", "#ec4899", "#64748b", "#84cc16", "#06b6d4"];
+  let off = 25;
+  const segs = items.map((x, i) => { const p = x.v / T * 100, s = `<circle cx="21" cy="21" r="15.915" fill="none" stroke="${C[i % 8]}" stroke-width="6" stroke-dasharray="${p} ${100 - p}" stroke-dashoffset="${off}"/>`; off -= p; return s; }).join("");
+  return `<div class="donutw"><svg viewBox="0 0 42 42" width="130" height="130">${segs}</svg><div class="leg">${items.map((x, i) => `<div><i style="background:${C[i % 8]}"></i>${esc(x.n)}<b>${Math.round(x.v / T * 100)}%</b></div>`).join("")}</div></div>`;
+}
+function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
+function sheet(title, label, cb) {
+  const d = document.createElement("div"); d.className = "ov";
+  d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
+  document.body.appendChild(d);
+  const c = () => d.remove(); d.onclick = e => { if (e.target === d) c(); };
+  $("#no").onclick = c;
+  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; c(); await cb(a); };
+  $("#sv").focus();
+}
+
 const views = {
   async home() {
-    V(`<div class="card"><div class="muted">סך ההון המשפחתי</div><div class="big" id="tot">…</div><div class="muted">לפי עדכוני השווי האחרונים שהוזנו, לא שווי רשמי</div></div><div id="rest"></div>`);
+    V(`<div class="hero"><div class="lbl">טוען…</div><div class="hbig">&nbsp;</div></div>`);
     try {
-      const L = await loadAll(), v = L.reduce((a, x) => a + x.val, 0), d = L.reduce((a, x) => a + x.dep, 0), p = v - d;
-      if (!$("#tot")) return;
-      $("#tot").textContent = fmt(v);
-      $("#rest").innerHTML = L.length
-        ? `<div class="row"><div class="card"><div class="muted">הפקדות נטו</div><b>${fmt(d)}</b></div><div class="card"><div class="muted">רווח / הפסד</div><b style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</b></div></div>`
-        : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`;
-    } catch (e) { $("#rest").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+      const [L0, mem] = await Promise.all([loadAll(), members()]);
+      if (!$("#view")) return;
+      const f = S.f || "all";
+      const L = L0.filter(x => f === "all" || (f === "joint" ? !x.owner_user_id : x.owner_user_id === f));
+      const v = L.reduce((a, x) => a + x.val, 0), d = L.reduce((a, x) => a + x.dep, 0), p = v - d, pct = d > 0 ? p / d * 100 : 0;
+      const g = {}; L.forEach(x => { const k = (x.asset_types && x.asset_types.name) || "ללא סוג"; g[k] = (g[k] || 0) + x.val; });
+      const items = Object.entries(g).map(([n, v]) => ({ n, v })).filter(x => x.v > 0).sort((a, b) => b.v - a.v);
+      const seg = [["all", "משפחה"], ...mem.map(m => [m.user_id, m.display_name]), ["joint", "משותף"]];
+      V(`<div class="seg">${seg.map(([k, l]) => `<button class="${f === k ? "on" : ""}" onclick="S.f='${k}';render()">${esc(l)}</button>`).join("")}</div>
+        <div class="hero"><div class="lbl">סך ההון</div><div class="hbig">${fmt(v)}</div>
+          <div class="chip">${p >= 0 ? "▲" : "▼"} ${fmt(Math.abs(p))}${d > 0 ? ` · ${Math.abs(pct).toFixed(1)}%` : ""}</div>
+          <div class="sm">לפי עדכוני שווי שהוזנו, לא שווי רשמי</div></div>
+        <div class="row"><div class="card"><div class="muted">הפקדות נטו</div><div class="n">${fmt(d)}</div></div>
+          <div class="card"><div class="muted">רווח / הפסד</div><div class="n" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</div></div></div>
+        ${items.length ? `<div class="card"><h2>חלוקה לפי סוג</h2>${donut(items)}</div>` : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`}`);
+    } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
     if (S.sel) return detail(S.sel);
@@ -201,14 +252,15 @@ async function detail(id) {
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
     <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>`);
 }
-async function act(id, kind) {
-  const a = parseFloat((prompt(kind === "valuation" ? "השווי הנוכחי (₪):" : "סכום (₪):") || "").replace(/,/g, ""));
-  if (isNaN(a) || a < 0 || (kind !== "valuation" && a === 0)) return;
-  const r = kind === "valuation"
-    ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: today(), source: "reported", source_label: "הוזן ידנית" })
-    : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: today() });
-  if (r.error) alert(r.error.message);
-  render();
+function act(id, kind) {
+  const T = { deposit: ["הפקדה", "סכום ההפקדה (₪)"], withdrawal: ["משיכה", "סכום המשיכה (₪)"], valuation: ["עדכון שווי", "השווי הנוכחי (₪)"] }[kind];
+  sheet(T[0], T[1], async a => {
+    if (kind !== "valuation" && a === 0) return;
+    const r = kind === "valuation"
+      ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: today(), source: "reported", source_label: "הוזן ידנית" })
+      : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: today() });
+    toast(r.error ? r.error.message : "נשמר ✓"); render();
+  });
 }
 
 async function addForm() {
