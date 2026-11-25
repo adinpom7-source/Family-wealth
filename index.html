@@ -56,6 +56,15 @@ nav button.on{color:var(--accent);font-weight:700}
 .sh{background:var(--card);width:100%;max-width:640px;margin:0 auto;border-radius:24px 24px 0 0;padding:20px 18px calc(20px + env(safe-area-inset-bottom));animation:up .22s ease}
 @keyframes up{from{transform:translateY(50px);opacity:0}}
 .toast{position:fixed;bottom:92px;inset-inline:0;margin:auto;width:max-content;max-width:90%;background:var(--text);color:var(--bg);padding:10px 18px;border-radius:14px;z-index:30;font-weight:600}
+/* theme v2: more color */
+:root{--bg:#EEF2FF;--card:#fff;--text:#16203A;--muted:#66708C;--line:#E0E6F7;--accent:#0D9488;--bad:#E2531F;--sh:0 2px 4px #4f46e508,0 10px 28px #4f46e51a}
+:root[data-theme=dark]{--bg:#1B2338;--card:#263250;--text:#EEF2FB;--muted:#9FACC9;--line:#364466;--accent:#5EEAD4;--bad:#FDA05A;--sh:0 8px 24px #0003}
+body{background:linear-gradient(180deg,#D9E2FF 0,var(--bg) 340px) no-repeat var(--bg)}
+:root[data-theme=dark] body{background:linear-gradient(180deg,#313C73 0,var(--bg) 340px) no-repeat var(--bg)}
+.hero{background:linear-gradient(135deg,#4F46E5 0%,#0D9488 62%,#22C55E 100%);box-shadow:0 12px 32px #4f46e54d}
+:root[data-theme=dark] .hero{background:linear-gradient(135deg,#4338CA 0%,#0F766E 100%);box-shadow:none}
+button{background-image:linear-gradient(135deg,#4F46E5,#0D9488);color:#fff}
+nav{backdrop-filter:blur(12px)}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
@@ -167,15 +176,21 @@ const V = h => ($("#view").innerHTML = h);
 const opt = (a, k, l) => (a || []).map(x => `<option value="${esc(x[k])}">${esc(x[l])}</option>`).join("");
 
 async function loadAll() {
+  if (S.mk === undefined) await loadMk();
   const [i, t, v] = await Promise.all([
     SB.from("investments").select("*,institutions(name),asset_types(name)").eq("archived", false).order("created_at"),
     SB.from("transactions").select("investment_id,kind,amount,occurred_on"),
-    SB.from("valuations").select("investment_id,value,as_of,created_at").order("as_of", { ascending: false }).order("created_at", { ascending: false })]);
+    SB.from("valuations").select("investment_id,value,as_of,created_at,source_label").order("as_of", { ascending: false }).order("created_at", { ascending: false })]);
   const err = i.error || t.error || v.error; if (err) throw err;
   const dep = {}, val = {};
   t.data.forEach(x => dep[x.investment_id] = (dep[x.investment_id] || 0) + (x.kind === "deposit" ? 1 : -1) * Number(x.amount));
   v.data.forEach(x => { if (!(x.investment_id in val)) val[x.investment_id] = x; });
-  return i.data.map(r => { const d = dep[r.id] || 0, l = val[r.id]; const aft = l ? t.data.filter(z => z.investment_id === r.id && z.occurred_on > l.as_of).reduce((a, z) => a + (z.kind === "deposit" ? 1 : -1) * Number(z.amount), 0) : 0; return { ...r, dep: d, val: l ? Number(l.value) + aft : d, asOf: l && l.as_of, hasVal: !!l }; });
+  return i.data.map(r => {
+    const d = dep[r.id] || 0, l = val[r.id], aft = l ? t.data.filter(z => z.investment_id === r.id && z.occurred_on > l.as_of).reduce((a, z) => a + (z.kind === "deposit" ? 1 : -1) * Number(z.amount), 0) : 0;
+    let v = l ? Number(l.value) + aft : d, est = false;
+    if (l && r.valuation_mode === "index" && S.mk) { const f = idxAt(l.as_of); if (f) { v = Number(l.value) * (S.mk[S.mk.length - 1][1] / f) + aft; est = true; } }
+    return { ...r, dep: d, val: v, est, asOf: l && l.as_of, srcLabel: l && l.source_label, hasVal: !!l };
+  });
 }
 
 async function members() {
@@ -183,19 +198,19 @@ async function members() {
   return S.mem;
 }
 function donut(items) {
-  const T = items.reduce((a, x) => a + x.v, 0), C = ["#0f766e", "#14b8a6", "#6366f1", "#f59e0b", "#ec4899", "#64748b", "#84cc16", "#06b6d4"];
+  const T = items.reduce((a, x) => a + x.v, 0), C = ["#4F46E5","#0D9488","#F59E0B","#EC4899","#8B5CF6","#22C55E","#06B6D4","#F97316"];
   let off = 25;
   const segs = items.map((x, i) => { const p = x.v / T * 100, s = `<circle cx="21" cy="21" r="15.915" fill="none" stroke="${C[i % 8]}" stroke-width="6" stroke-dasharray="${p} ${100 - p}" stroke-dashoffset="${off}"/>`; off -= p; return s; }).join("");
   return `<div class="donutw"><svg viewBox="0 0 42 42" width="130" height="130">${segs}</svg><div class="leg">${items.map((x, i) => `<div><i style="background:${C[i % 8]}"></i>${esc(x.n)}<b>${Math.round(x.v / T * 100)}%</b></div>`).join("")}</div></div>`;
 }
 function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
-function sheet(title, label, cb, def, dd) {
+function sheet(title, label, cb, def, dd, withSrc) {
   const d = document.createElement("div"); d.className = "ov";
-  d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><label>תאריך</label><input id="sd" type="date" dir="ltr" value="${dd || today()}"><button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
+  d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><label>תאריך</label><input id="sd" type="date" dir="ltr" value="${dd || today()}">${withSrc ? `<label>מקור הנתון</label><select id="ss"><option>דוח חודשי של בית ההשקעות</option><option>דוח רבעוני</option><option>דוח שנתי</option><option>אתר או אפליקציה של הגוף המנהל</option><option value="est">הערכה אישית</option></select>` : ""}<button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
   document.body.appendChild(d);
   const c = () => d.remove(); d.onclick = e => { if (e.target === d) c(); };
   $("#no").onclick = c;
-  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; const dt = $("#sd").value || today(); c(); await cb(a, dt); };
+  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; const dt = $("#sd").value || today(), so = $("#ss") ? $("#ss").selectedOptions[0] : null, sv = so ? { l: so.text, e: so.value === "est" } : null; c(); await cb(a, dt, sv); };
   if (def !== undefined) $("#sv").value = def; $("#sv").focus();
 }
 
@@ -286,7 +301,7 @@ async function detail(id) {
     <b>${fmt(e.a)}</b><button class="ghost" style="width:auto;margin:0;padding:6px 10px" onclick="delEv('${e.t}','${e.id}')" aria-label="מחיקה">✕</button></div>`;
   V(`<button class="ghost" onclick="S.sel=null;render()">→ חזרה</button>
     <div class="card" style="margin-top:12px"><h2>${esc(x.name)}</h2><div class="big">${fmt(x.val)}</div>
-      <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: הוזן ידנית" : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
+      <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: " + esc(x.srcLabel || "הוזן ידנית") + (x.est ? " · השווי הנוכחי הוא הערכה לפי S&P 500, לא שווי רשמי" : "") : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
       ${x.started_on ? `<div class="muted">תחילת השקעה: ${esc(x.started_on)}</div>` : ""}<p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
@@ -317,14 +332,14 @@ async function delInv(id) {
 function cancelForm() { const e = S.ed; S.add = 0; S.ed = null; S.dn = ""; S.sel = e ? e.id : null; render(); }
 function act(id, kind) {
   const T = { deposit: ["הפקדה", "סכום ההפקדה (₪)"], withdrawal: ["משיכה", "סכום המשיכה (₪)"], valuation: ["עדכון שווי", "השווי הנוכחי (₪)"] }[kind];
-  sheet(T[0], T[1], async (a, dt) => {
+  sheet(T[0], T[1], async (a, dt, sv) => {
     if (kind !== "valuation" && a === 0) return;
     const r = kind === "valuation"
-      ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: dt, source: "reported", source_label: "הוזן ידנית" })
+      ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: dt, source: sv && sv.e ? "estimate" : "reported", source_label: sv ? sv.l : "הוזן ידנית" })
       : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: dt });
     const c = S.cur; if (kind !== "valuation" && !r.error && c && c.id === id && c.hasVal && dt === c.asOf) await SB.from("valuations").insert({ investment_id: id, value: c.val + (kind === "deposit" ? a : -a), as_of: dt, source: "estimate", source_label: "עודכן אוטומטית עם תנועה" });
     toast(r.error ? r.error.message : "נשמר ✓"); render();
-  });
+  }, undefined, undefined, kind === "valuation");
 }
 
 async function addForm() {
@@ -344,11 +359,13 @@ async function addForm() {
     <label>בעלות</label><select id="f_o"><option value="">משותף</option>${opt(mem.data, "user_id", "display_name")}</select><br><br>
     <label>טווח</label><select id="f_h"><option value="long">ארוך</option><option value="medium">בינוני</option><option value="short">קצר</option></select><br><br>
     <label>מסלול (אופציונלי)</label><input id="f_k">
+    <label>חישוב שווי</label><select id="f_m"><option value="manual">ידני, לפי דוחות שאני מזין</option><option value="index">צמוד ל-S&P 500, הערכה בין דוחות</option></select>
     <label>תאריך תחילת ההשקעה</label><input id="f_s" type="date" dir="ltr">
     <label>דמי ניהול שנתיים באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
     <button onclick="saveInv()">שמירה</button></div>`);
+  ["f_n", "f_k"].forEach(k => $("#" + k).addEventListener("input", autoMode));
   if (S.ed) { const e = S.ed; $("#f_i").value = e.institution_id || ""; $("#f_t").value = e.type_id || ""; $("#f_o").value = e.owner_user_id || "";
-    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_s").value = e.started_on || ""; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
+    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_s").value = e.started_on || ""; $("#f_m").value = e.valuation_mode === "index" ? "index" : "manual"; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
 }
 async function newItem(tbl) {
   S.dn = $("#f_n").value;
@@ -367,7 +384,7 @@ async function seed() {
 async function saveInv() {
   const n = $("#f_n").value.trim(); if (!n) return alert("יש להזין שם");
   const row = { name: n, institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
-    horizon: $("#f_h").value, track: $("#f_k").value || null, started_on: $("#f_s").value || null, fee_pct: parseFloat($("#f_f").value) || null };
+    horizon: $("#f_h").value, track: $("#f_k").value || null, started_on: $("#f_s").value || null, valuation_mode: $("#f_m").value, benchmark_symbol: $("#f_m").value === "index" ? "SPX" : null, fee_pct: parseFloat($("#f_f").value) || null };
   const r = S.ed ? await SB.from("investments").update(row).eq("id", S.ed.id)
                  : await SB.from("investments").insert({ household_id: S.m.household_id, ...row });
   if (r.error) return alert(r.error.message);
@@ -454,22 +471,31 @@ function drawSc() {
   el.innerHTML = `<div class="card"><h2>השוואת תרחישים</h2>${S.sc.map((s, i) => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)"><div><b>תרחיש ${i + 1}</b><div class="muted">${fmt(s.mo)}/חודש · ${s.rate}% · ${s.yrs} שנים</div></div><div style="text-align:end"><b>${fmt(s.b)}</b><div class="muted">רווח ${fmt(s.b - s.d)}</div></div></div>`).join("")}<button class="ghost" onclick="S.sc=[];render()">ניקוי</button></div>`;
 }
 /* ===== market ===== */
+async function loadMk() { try { const r = await fetch("market.json?v=" + new Date().toISOString().slice(0, 13)); S.mkMeta = await r.json(); S.mk = S.mkMeta.series.SPX; } catch (e) { S.mk = null; } }
+function idxAt(d) { let v = null; for (const p of S.mk) { if (p[0] <= d) v = p[1]; else break; } return v; }
+function spark(a) {
+  const W = 320, H = 90, P = 6, lo = Math.min(...a), hi = Math.max(...a), X = i => P + i * (W - 2 * P) / (a.length - 1), Y = v => H - P - (v - lo) / (hi - lo || 1) * (H - 2 * P);
+  return `<svg viewBox="0 0 ${W} ${H}" dir="ltr" style="width:100%;display:block;margin:8px 0"><path d="${a.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join("")}" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linejoin="round"/></svg>`;
+}
 async function market(seg) {
-  V(seg + `<div class="card"><h2>שערי מטבע</h2><div id="fx" class="muted">טוען…</div></div><div class="card"><h2>מדדים</h2><div id="ix" class="muted">טוען…</div></div>`);
+  V(seg + `<div class="card"><h2>S&amp;P 500</h2><div id="ix" class="muted">טוען…</div></div><div class="card"><h2>שערי מטבע</h2><div id="fx" class="muted">טוען…</div></div>`);
+  loadMk().then(() => {
+    const a = S.mk, el = $("#ix"); if (!el) return;
+    if (!a || a.length < 30) { el.textContent = "עדיין אין נתוני מדד. יש להפעיל את המשימה האוטומטית (Actions) ב-GitHub, לפי ההסבר."; return; }
+    const n = a.length, last = a[n - 1][1], pc = (v, b) => b ? (v / b - 1) * 100 : null, yr = last_year => { let b = null; for (const p of a) { if (p[0] < last_year) b = p[1]; else break; } return b; };
+    const y0 = new Date().getFullYear() + "-01-01", d1 = new Date(); d1.setFullYear(d1.getFullYear() - 1);
+    const chip = (l, x) => `<div style="flex:1"><div class="muted">${l}</div><b style="color:var(${x != null && x < 0 ? "--bad" : "--accent"})">${x == null ? "—" : (x >= 0 ? "▲ " : "▼ ") + Math.abs(x).toFixed(2) + "%"}</b></div>`;
+    el.innerHTML = `<div class="big" style="font-size:34px">${last.toLocaleString("he-IL", { maximumFractionDigits: 2 })}</div>
+      <div style="display:flex;gap:10px;margin-top:8px">${chip("יומי", pc(last, a[n - 2][1]))}${chip("מתחילת השנה", pc(last, yr(y0)))}${chip("שנה", pc(last, yr(d1.toISOString().slice(0, 10))))}</div>
+      ${spark(a.slice(-260).map(p => p[1]))}<div class="muted">סגירה אחרונה ${esc(a[n - 1][0])} · נתוני שוק ציבוריים, בעיכוב של עד יום מסחר.</div>`;
+  });
   try {
     const q = async c => (await fetch(`https://api.frankfurter.dev/v2/providers/boi/rate/${c}/ils`)).json();
-    const [u, e] = await Promise.all([q("usd"), q("eur")]);
-    if (!$("#fx")) return;
+    const [u, e] = await Promise.all([q("usd"), q("eur")]); if (!$("#fx")) return;
     $("#fx").innerHTML = [["דולר", u], ["יורו", e]].map(([n, d]) => `<div style="display:flex;justify-content:space-between;padding:8px 0"><b>${n}</b><b>₪${Number(d.rate).toFixed(3)}</b></div>`).join("") + `<div class="muted">שער יציג של בנק ישראל, מתעדכן פעם ביום${u.date ? " · " + esc(u.date) : ""}.</div>`;
   } catch (x) { if ($("#fx")) $("#fx").textContent = "שערי המטבע לא זמינים כרגע."; }
-  try {
-    const r = await SB.from("market_series").select("symbol,as_of,value").order("as_of", { ascending: false }).limit(300); if (r.error) throw r.error;
-    const by = {}; (r.data || []).forEach(x => (by[x.symbol] = by[x.symbol] || []).push(x));
-    const ks = Object.keys(by); if (!$("#ix")) return;
-    $("#ix").innerHTML = ks.length ? ks.map(k => { const a = by[k], c = a[1] ? (a[0].value / a[1].value - 1) * 100 : null; return `<div style="display:flex;justify-content:space-between;padding:8px 0"><b>${esc(k)}</b><span><b>${Number(a[0].value).toLocaleString("he-IL")}</b> <span class="muted">${c == null ? "" : (c >= 0 ? "▲" : "▼") + Math.abs(c).toFixed(2) + "%"} · ${esc(a[0].as_of)}</span></span></div>`; }).join("")
-      : "עדיין אין נתוני מדדים. מדדים (S&P 500, נאסד״ק ועוד) דורשים משימה אוטומטית בצד שרת, כי אתרי הנתונים חוסמים גישה ישירה מהדפדפן. זה השלב הבא.";
-  } catch (x) { if ($("#ix")) $("#ix").textContent = "לא ניתן לטעון מדדים."; }
 }
+function autoMode() { const m = $("#f_m"); if (m && !S.ed && m.value === "manual" && /s\s*&\s*p|sp\s*500|ס.?אנד|500/i.test($("#f_n").value + " " + $("#f_k").value)) m.value = "index"; }
 /* ===== goals ===== */
 async function goalForm() {
   V("טוען…"); const L = await loadAll();
