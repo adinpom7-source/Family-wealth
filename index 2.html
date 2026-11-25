@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>הון משפחתי</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="הון">
+<meta name="theme-color" content="#0f766e">
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#12202b;--muted:#6b7a88;--line:#e3e7eb;--accent:#0f766e;--on:#fff;--bad:#b42318}
+:root[data-theme=dark]{--bg:#0e1419;--card:#171f27;--text:#eaf0f5;--muted:#8b9aa8;--line:#25303a;--accent:#2dd4bf;--on:#06231f;--bad:#f97066}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+#app{min-height:100%;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px}
+header h1{font-size:18px;margin:0}
+main{flex:1;padding:6px 16px 96px;max-width:640px;width:100%;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
+.muted{color:var(--muted);font-size:14px}
+.big{font-size:34px;font-weight:700;letter-spacing:-.5px}
+h2{font-size:17px;margin:0 0 10px}
+input{width:100%;padding:13px 14px;margin:6px 0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}
+button{font:inherit;cursor:pointer;border:0;border-radius:12px;padding:13px 16px;background:var(--accent);color:var(--on);font-weight:600;width:100%;margin-top:4px}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+button.icon{width:auto;padding:8px 12px;margin:0}
+.err{color:var(--bad);font-size:14px;min-height:20px}
+.wrap{max-width:420px;margin:0 auto;padding:28px 18px}
+nav{position:fixed;bottom:0;inset-inline:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;color:var(--muted);margin:0;padding:8px 2px;font-size:12px;font-weight:500;display:flex;flex-direction:column;align-items:center;gap:2px}
+nav button .i{font-size:20px}
+nav button.on{color:var(--accent);font-weight:700}
+.code{font:700 22px ui-monospace,monospace;letter-spacing:2px;direction:ltr;text-align:center;padding:10px;background:var(--bg);border-radius:12px}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
+<script>
+const SB = supabase.createClient(
+  "https://bshlkzsfabfosgatcfii.supabase.co",
+  "sb_publishable_KNOPqZIot1eZ11t4ndmaJQ_3T8v1EOR"   // public key, safe in the browser
+);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const S = { tab: "home", m: null };
+
+/* ---------- theme ---------- */
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("theme", t); } catch (e) {}
+}
+(function () {
+  let t = null;
+  try { t = localStorage.getItem("theme"); } catch (e) {}
+  setTheme(t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+})();
+const toggleTheme = () => { setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"); render(); };
+
+/* ---------- boot ---------- */
+async function boot() {
+  const { data: { session } } = await SB.auth.getSession();
+  if (!session) return authView();
+  const { data, error } = await SB.from("household_members")
+    .select("household_id,display_name,households(name,join_code)")
+    .eq("user_id", session.user.id).maybeSingle();
+  if (error) return fatal(error.message);
+  if (!data) return onboardView();
+  S.m = data; render();
+}
+function fatal(msg) {
+  $("#app").innerHTML = `<div class="wrap"><div class="card"><h2>משהו השתבש</h2><div class="err">${esc(msg)}</div><button onclick="boot()">נסה שוב</button></div></div>`;
+}
+
+/* ---------- auth ---------- */
+function authView(msg = "") {
+  $("#app").innerHTML = `<div class="wrap">
+    <h1>הון משפחתי</h1><p class="muted">כניסה או יצירת חשבון</p>
+    <div class="card">
+      <label>אימייל</label><input id="em" type="email" autocomplete="email" dir="ltr">
+      <label>סיסמה (לפחות 8 תווים)</label><input id="pw" type="password" autocomplete="current-password" dir="ltr">
+      <div class="err" id="err">${esc(msg)}</div>
+      <button onclick="doAuth('in')">כניסה</button>
+      <button class="ghost" onclick="doAuth('up')">יצירת חשבון חדש</button>
+    </div></div>`;
+}
+async function doAuth(mode) {
+  const email = $("#em").value.trim(), password = $("#pw").value;
+  if (!email || password.length < 8) return ($("#err").textContent = "יש להזין אימייל וסיסמה של 8 תווים לפחות");
+  const { data, error } = mode === "in"
+    ? await SB.auth.signInWithPassword({ email, password })
+    : await SB.auth.signUp({ email, password });
+  if (error) return ($("#err").textContent = error.message);
+  if (!data.session) return ($("#err").textContent = "החשבון נוצר. אם נדרש אימות במייל, אשרו אותו ואז היכנסו.");
+  boot();
+}
+const signOut = async () => { await SB.auth.signOut(); S.m = null; boot(); };
+
+/* ---------- household onboarding ---------- */
+function onboardView(msg = "") {
+  $("#app").innerHTML = `<div class="wrap">
+    <h1>ברוכים הבאים</h1><p class="muted">מי ראשון יוצר משפחה, והשני מצטרף עם קוד.</p>
+    <div class="card"><h2>יצירת משפחה חדשה</h2>
+      <label>השם שלך</label><input id="n1">
+      <button onclick="createHH()">יצירה</button></div>
+    <div class="card"><h2>הצטרפות עם קוד</h2>
+      <label>השם שלך</label><input id="n2">
+      <label>קוד הצטרפות</label><input id="cd" dir="ltr">
+      <button class="ghost" onclick="joinHH()">הצטרפות</button></div>
+    <div class="err" id="err">${esc(msg)}</div>
+    <button class="ghost" onclick="signOut()">יציאה</button></div>`;
+}
+async function createHH() {
+  const n = $("#n1").value.trim(); if (!n) return ($("#err").textContent = "יש להזין שם");
+  const { error } = await SB.rpc("create_household", { p_name: "המשפחה", p_display: n });
+  error ? ($("#err").textContent = error.message) : boot();
+}
+async function joinHH() {
+  const n = $("#n2").value.trim(), c = $("#cd").value.trim();
+  if (!n || !c) return ($("#err").textContent = "יש להזין שם וקוד");
+  const { error } = await SB.rpc("join_household", { p_code: c, p_display: n });
+  error ? ($("#err").textContent = "קוד לא תקין") : boot();
+}
+
+/* ---------- app shell ---------- */
+const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["more","⚙️","עוד"]];
+function render() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("#app").innerHTML = `
+    <header><h1>${esc(S.m.households.name)}</h1>
+      <button class="ghost icon" onclick="toggleTheme()" aria-label="מצב כהה/בהיר">${dark ? "☀️" : "🌙"}</button></header>
+    <main id="view"></main>
+    <nav>${TABS.map(([k,i,l]) => `<button class="${S.tab===k?"on":""}" onclick="go('${k}')"><span class="i">${i}</span>${l}</button>`).join("")}</nav>`;
+  views[S.tab]();
+}
+const go = t => { S.tab = t; render(); };
+
+const views = {
+  async home() {
+    $("#view").innerHTML = `
+      <div class="card"><div class="muted">סך ההון המשפחתי</div><div class="big">₪0</div>
+        <div class="muted" id="dbstat">בודק חיבור למסד הנתונים…</div></div>
+      <div class="card"><h2>הצעד הבא</h2><div class="muted">הוספת השקעות ראשונות, ואז יופיעו כאן החלוקות, הרווח וההתפתחות לאורך זמן.</div></div>`;
+    const { count, error } = await SB.from("investments").select("id", { count: "exact", head: true });
+    const el = $("#dbstat"); if (!el) return;
+    el.textContent = error ? "שגיאת חיבור: " + error.message : `מחובר למסד הנתונים · ${count} השקעות`;
+  },
+  inv()   { $("#view").innerHTML = `<div class="card"><h2>השקעות</h2><div class="muted">בקרוב: רשימת השקעות, הוספה, הפקדות ועדכון שווי.</div></div>`; },
+  goals() { $("#view").innerHTML = `<div class="card"><h2>מטרות</h2><div class="muted">בקרוב: מטרות עם סכום יעד, תאריך והתקדמות.</div></div>`; },
+  more() {
+    $("#view").innerHTML = `
+      <div class="card"><h2>שלום ${esc(S.m.display_name)}</h2>
+        <div class="muted">קוד להצטרפות בן/בת הזוג:</div>
+        <div class="code">${esc(S.m.households.join_code)}</div></div>
+      <div class="card"><button class="ghost" onclick="signOut()">יציאה</button></div>`;
+  }
+};
+
+boot();
+</script>
+</body>
+</html>
