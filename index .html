@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>הון משפחתי</title>
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="הון">
+<meta name="theme-color" content="#0f766e">
+<style>
+:root{--bg:#f5f6f8;--card:#fff;--text:#12202b;--muted:#6b7a88;--line:#e3e7eb;--accent:#0f766e;--on:#fff;--bad:#b42318}
+:root[data-theme=dark]{--bg:#0e1419;--card:#171f27;--text:#eaf0f5;--muted:#8b9aa8;--line:#25303a;--accent:#2dd4bf;--on:#06231f;--bad:#f97066}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%}
+body{background:var(--bg);color:var(--text);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Arial,sans-serif}
+#app{min-height:100%;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top)}
+header{display:flex;align-items:center;justify-content:space-between;padding:14px 18px}
+header h1{font-size:18px;margin:0}
+main{flex:1;padding:6px 16px 96px;max-width:640px;width:100%;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin-bottom:14px}
+.muted{color:var(--muted);font-size:14px}
+.big{font-size:34px;font-weight:700;letter-spacing:-.5px}
+h2{font-size:17px;margin:0 0 10px}
+input{width:100%;padding:13px 14px;margin:6px 0 12px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}
+button{font:inherit;cursor:pointer;border:0;border-radius:12px;padding:13px 16px;background:var(--accent);color:var(--on);font-weight:600;width:100%;margin-top:4px}
+button.ghost{background:transparent;color:var(--text);border:1px solid var(--line)}
+button.icon{width:auto;padding:8px 12px;margin:0}
+.err{color:var(--bad);font-size:14px;min-height:20px}
+.wrap{max-width:420px;margin:0 auto;padding:28px 18px}
+nav{position:fixed;bottom:0;inset-inline:0;display:flex;background:var(--card);border-top:1px solid var(--line);padding:6px 4px calc(6px + env(safe-area-inset-bottom))}
+nav button{flex:1;background:none;color:var(--muted);margin:0;padding:8px 2px;font-size:12px;font-weight:500;display:flex;flex-direction:column;align-items:center;gap:2px}
+nav button .i{font-size:20px}
+nav button.on{color:var(--accent);font-weight:700}
+.code{font:700 22px ui-monospace,monospace;letter-spacing:2px;direction:ltr;text-align:center;padding:10px;background:var(--bg);border-radius:12px}
+.row{display:flex;gap:10px}.row .card{flex:1}.card[onclick]{cursor:pointer}select{width:100%;padding:13px 14px;margin:6px 0 8px;border-radius:12px;border:1px solid var(--line);background:var(--bg);color:var(--text);font-size:16px}label{font-size:14px;color:var(--muted)}
+</style>
+</head>
+<body>
+<div id="app"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.49.4/dist/umd/supabase.js"></script>
+<script>
+const SB = supabase.createClient(
+  "https://bshlkzsfabfosgatcfii.supabase.co",
+  "sb_publishable_KNOPqZIot1eZ11t4ndmaJQ_3T8v1EOR"   // public key, safe in the browser
+);
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+const S = { tab: "home", m: null };
+
+/* ---------- theme ---------- */
+function setTheme(t) {
+  document.documentElement.dataset.theme = t;
+  try { localStorage.setItem("theme", t); } catch (e) {}
+}
+(function () {
+  let t = null;
+  try { t = localStorage.getItem("theme"); } catch (e) {}
+  setTheme(t || (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light"));
+})();
+const toggleTheme = () => { setTheme(document.documentElement.dataset.theme === "dark" ? "light" : "dark"); render(); };
+
+/* ---------- boot ---------- */
+async function boot() {
+  const { data: { session } } = await SB.auth.getSession();
+  if (!session) return authView();
+  const { data, error } = await SB.from("household_members")
+    .select("household_id,display_name,households(name,join_code)")
+    .eq("user_id", session.user.id).maybeSingle();
+  if (error) return fatal(error.message);
+  if (!data) return onboardView();
+  S.m = data; render();
+}
+function fatal(msg) {
+  $("#app").innerHTML = `<div class="wrap"><div class="card"><h2>משהו השתבש</h2><div class="err">${esc(msg)}</div><button onclick="boot()">נסה שוב</button></div></div>`;
+}
+
+/* ---------- auth ---------- */
+function authView(msg = "") {
+  $("#app").innerHTML = `<div class="wrap">
+    <h1>הון משפחתי</h1><p class="muted">כניסה או יצירת חשבון</p>
+    <div class="card">
+      <label>אימייל</label><input id="em" type="email" autocomplete="email" dir="ltr">
+      <label>סיסמה (לפחות 8 תווים)</label><input id="pw" type="password" autocomplete="current-password" dir="ltr">
+      <div class="err" id="err">${esc(msg)}</div>
+      <button onclick="doAuth('in')">כניסה</button>
+      <button class="ghost" onclick="doAuth('up')">יצירת חשבון חדש</button>
+    </div></div>`;
+}
+async function doAuth(mode) {
+  const email = $("#em").value.trim(), password = $("#pw").value;
+  if (!email || password.length < 8) return ($("#err").textContent = "יש להזין אימייל וסיסמה של 8 תווים לפחות");
+  const { data, error } = mode === "in"
+    ? await SB.auth.signInWithPassword({ email, password })
+    : await SB.auth.signUp({ email, password });
+  if (error) return ($("#err").textContent = error.message);
+  if (!data.session) return ($("#err").textContent = "החשבון נוצר. אם נדרש אימות במייל, אשרו אותו ואז היכנסו.");
+  boot();
+}
+const signOut = async () => { await SB.auth.signOut(); S.m = null; boot(); };
+
+/* ---------- household onboarding ---------- */
+function onboardView(msg = "") {
+  $("#app").innerHTML = `<div class="wrap">
+    <h1>ברוכים הבאים</h1><p class="muted">מי ראשון יוצר משפחה, והשני מצטרף עם קוד.</p>
+    <div class="card"><h2>יצירת משפחה חדשה</h2>
+      <label>השם שלך</label><input id="n1">
+      <button onclick="createHH()">יצירה</button></div>
+    <div class="card"><h2>הצטרפות עם קוד</h2>
+      <label>השם שלך</label><input id="n2">
+      <label>קוד הצטרפות</label><input id="cd" dir="ltr">
+      <button class="ghost" onclick="joinHH()">הצטרפות</button></div>
+    <div class="err" id="err">${esc(msg)}</div>
+    <button class="ghost" onclick="signOut()">יציאה</button></div>`;
+}
+async function createHH() {
+  const n = $("#n1").value.trim(); if (!n) return ($("#err").textContent = "יש להזין שם");
+  const { error } = await SB.rpc("create_household", { p_name: "המשפחה", p_display: n });
+  error ? ($("#err").textContent = error.message) : boot();
+}
+async function joinHH() {
+  const n = $("#n2").value.trim(), c = $("#cd").value.trim();
+  if (!n || !c) return ($("#err").textContent = "יש להזין שם וקוד");
+  const { error } = await SB.rpc("join_household", { p_code: c, p_display: n });
+  error ? ($("#err").textContent = "קוד לא תקין") : boot();
+}
+
+/* ---------- app shell ---------- */
+const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["more","⚙️","עוד"]];
+function render() {
+  const dark = document.documentElement.dataset.theme === "dark";
+  $("#app").innerHTML = `
+    <header><h1>${esc(S.m.households.name)}</h1>
+      <button class="ghost icon" onclick="toggleTheme()" aria-label="מצב כהה/בהיר">${dark ? "☀️" : "🌙"}</button></header>
+    <main id="view"></main>
+    <nav>${TABS.map(([k,i,l]) => `<button class="${S.tab===k?"on":""}" onclick="go('${k}')"><span class="i">${i}</span>${l}</button>`).join("")}</nav>`;
+  views[S.tab]();
+}
+const go = t => { S.tab = t; S.sel = S.add = null; render(); };
+const fmt = n => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(n || 0);
+const today = () => new Date().toISOString().slice(0, 10);
+const V = h => ($("#view").innerHTML = h);
+const opt = (a, k, l) => (a || []).map(x => `<option value="${esc(x[k])}">${esc(x[l])}</option>`).join("");
+
+async function loadAll() {
+  const [i, t, v] = await Promise.all([
+    SB.from("investments").select("*,institutions(name),asset_types(name)").eq("archived", false).order("created_at"),
+    SB.from("transactions").select("investment_id,kind,amount"),
+    SB.from("valuations").select("investment_id,value,as_of,created_at").order("as_of", { ascending: false }).order("created_at", { ascending: false })]);
+  const err = i.error || t.error || v.error; if (err) throw err;
+  const dep = {}, val = {};
+  t.data.forEach(x => dep[x.investment_id] = (dep[x.investment_id] || 0) + (x.kind === "deposit" ? 1 : -1) * Number(x.amount));
+  v.data.forEach(x => { if (!(x.investment_id in val)) val[x.investment_id] = x; });
+  return i.data.map(r => { const d = dep[r.id] || 0, l = val[r.id]; return { ...r, dep: d, val: l ? Number(l.value) : d, asOf: l && l.as_of, hasVal: !!l }; });
+}
+
+const views = {
+  async home() {
+    V(`<div class="card"><div class="muted">סך ההון המשפחתי</div><div class="big" id="tot">…</div><div class="muted">לפי עדכוני השווי האחרונים שהוזנו, לא שווי רשמי</div></div><div id="rest"></div>`);
+    try {
+      const L = await loadAll(), v = L.reduce((a, x) => a + x.val, 0), d = L.reduce((a, x) => a + x.dep, 0), p = v - d;
+      if (!$("#tot")) return;
+      $("#tot").textContent = fmt(v);
+      $("#rest").innerHTML = L.length
+        ? `<div class="row"><div class="card"><div class="muted">הפקדות נטו</div><b>${fmt(d)}</b></div><div class="card"><div class="muted">רווח / הפסד</div><b style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</b></div></div>`
+        : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`;
+    } catch (e) { $("#rest").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  },
+  async inv() {
+    if (S.sel) return detail(S.sel);
+    if (S.add) return addForm();
+    V(`<button onclick="S.add=1;render()">➕ השקעה חדשה</button><div id="list" class="muted" style="margin-top:14px">טוען…</div>`);
+    try {
+      const L = await loadAll(); if (!$("#list")) return;
+      $("#list").innerHTML = L.length ? L.map(x => `<div class="card" onclick="S.sel='${x.id}';render()"><b>${esc(x.name)}</b>
+        <div class="muted">${esc(x.institutions && x.institutions.name || "")} · ${esc(x.asset_types && x.asset_types.name || "")}</div>
+        <div class="big" style="font-size:24px">${fmt(x.val)}</div>
+        <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון שווי"}</div></div>`).join("") : "עדיין אין השקעות.";
+    } catch (e) { $("#list").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  },
+  goals() { V(`<div class="card"><h2>מטרות</h2><div class="muted">בקרוב: מטרות עם סכום יעד, תאריך והתקדמות.</div></div>`); },
+  more() {
+    V(`<div class="card"><h2>שלום ${esc(S.m.display_name)}</h2><div class="muted">קוד להצטרפות בן/בת הזוג:</div>
+      <div class="code">${esc(S.m.households.join_code)}</div></div>
+      <div class="card"><button class="ghost" onclick="signOut()">יציאה</button></div>`);
+  }
+};
+
+async function detail(id) {
+  V("טוען…");
+  const x = (await loadAll()).find(r => r.id === id);
+  if (!x) { S.sel = null; return render(); }
+  V(`<button class="ghost" onclick="S.sel=null;render()">→ חזרה</button>
+    <div class="card" style="margin-top:12px"><h2>${esc(x.name)}</h2><div class="big">${fmt(x.val)}</div>
+      <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: הוזן ידנית" : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
+      <p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
+    <button onclick="act('${id}','deposit')">הפקדה</button>
+    <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
+    <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>`);
+}
+async function act(id, kind) {
+  const a = parseFloat((prompt(kind === "valuation" ? "השווי הנוכחי (₪):" : "סכום (₪):") || "").replace(/,/g, ""));
+  if (isNaN(a) || a < 0 || (kind !== "valuation" && a === 0)) return;
+  const r = kind === "valuation"
+    ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: today(), source: "reported", source_label: "הוזן ידנית" })
+    : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: today() });
+  if (r.error) alert(r.error.message);
+  render();
+}
+
+async function addForm() {
+  V("טוען…");
+  const [ins, ty, mem] = await Promise.all([
+    SB.from("institutions").select("id,name").order("name"), SB.from("asset_types").select("id,name").order("name"),
+    SB.from("household_members").select("user_id,display_name")]);
+  const empty = !(ins.data || []).length && !(ty.data || []).length;
+  V(`<button class="ghost" onclick="S.add=0;render()">→ ביטול</button>
+    <div class="card" style="margin-top:12px"><h2>השקעה חדשה</h2>
+    <label>שם</label><input id="f_n" value="${esc(S.dn || "")}">
+    ${empty ? `<button class="ghost" onclick="seed()">הוסף רשימה מוכנה של בתי השקעות וסוגים</button><br><br>` : ""}
+    <label>בית השקעות</label><select id="f_i"><option value="">—</option>${opt(ins.data, "id", "name")}</select>
+    <button class="ghost" onclick="newItem('institutions')">➕ בית השקעות חדש</button><br><br>
+    <label>סוג השקעה</label><select id="f_t"><option value="">—</option>${opt(ty.data, "id", "name")}</select>
+    <button class="ghost" onclick="newItem('asset_types')">➕ סוג חדש</button><br><br>
+    <label>בעלות</label><select id="f_o"><option value="">משותף</option>${opt(mem.data, "user_id", "display_name")}</select><br><br>
+    <label>טווח</label><select id="f_h"><option value="long">ארוך</option><option value="medium">בינוני</option><option value="short">קצר</option></select><br><br>
+    <label>מסלול (אופציונלי)</label><input id="f_k">
+    <label>דמי ניהול שנתיים באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
+    <button onclick="saveInv()">שמירה</button></div>`);
+}
+async function newItem(tbl) {
+  S.dn = $("#f_n").value;
+  const name = (prompt("שם:") || "").trim(); if (!name) return;
+  const row = { household_id: S.m.household_id, name };
+  if (tbl === "asset_types") row.bucket = { "1": "savings", "3": "property" }[prompt("קטגוריה: 1 = חיסכון/פנסיה, 2 = השקעות, 3 = נכסים", "2")] || "investments";
+  const r = await SB.from(tbl).insert(row); if (r.error) alert(r.error.message);
+  render();
+}
+async function seed() {
+  const h = S.m.household_id;
+  await SB.from("institutions").insert(["מיטב", "אלטשולר שחם", "מור", "הפניקס", "הראל", "מנורה"].map(name => ({ household_id: h, name })));
+  await SB.from("asset_types").insert([["תיק עצמאי","investments"],["קרן מחקה מדד","investments"],["קרן סל (ETF)","investments"],["מניות","investments"],["אג״ח","investments"],["קרן השתלמות","savings"],["קופת גמל","savings"],["פנסיה","savings"],["נדל״ן","property"],["השקעה אלטרנטיבית","investments"]].map(([name, bucket]) => ({ household_id: h, name, bucket })));
+  S.dn = $("#f_n").value; render();
+}
+async function saveInv() {
+  const n = $("#f_n").value.trim(); if (!n) return alert("יש להזין שם");
+  const r = await SB.from("investments").insert({ household_id: S.m.household_id, name: n,
+    institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
+    horizon: $("#f_h").value, track: $("#f_k").value || null, fee_pct: parseFloat($("#f_f").value) || null });
+  if (r.error) return alert(r.error.message);
+  S.add = 0; S.dn = ""; render();
+}
+
+boot();
+</script>
+</body>
+</html>
