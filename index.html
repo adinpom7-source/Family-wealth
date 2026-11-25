@@ -150,7 +150,7 @@ async function joinHH() {
 }
 
 /* ---------- app shell ---------- */
-const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["more","⚙️","עוד"]];
+const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["tools","🧮","כלים"],["more","⚙️","עוד"]];
 function render() {
   const dark = document.documentElement.dataset.theme === "dark";
   $("#app").innerHTML = `
@@ -160,7 +160,7 @@ function render() {
     <nav>${TABS.map(([k,i,l]) => `<button class="${S.tab===k?"on":""}" onclick="go('${k}')"><span class="i">${i}</span>${l}</button>`).join("")}</nav>`;
   views[S.tab]();
 }
-const go = t => { S.tab = t; S.sel = S.add = S.ed = null; render(); };
+const go = t => { S.tab = t; S.sel = S.add = S.ed = null; S.gf = 0; render(); };
 const fmt = n => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(n || 0);
 const today = () => new Date().toISOString().slice(0, 10);
 const V = h => ($("#view").innerHTML = h);
@@ -218,7 +218,9 @@ const views = {
         <div class="row"><div class="card"><div class="muted">הפקדות נטו</div><div class="n">${fmt(d)}</div></div>
           <div class="card"><div class="muted">רווח / הפסד</div><div class="n" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</div></div></div>
         ${items.length ? `<div class="card"><h2>חלוקה לפי סוג</h2>${donut(items)}</div>` : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`}`);
-      if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist(); }
+      if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist();
+        const st = L.filter(x => !x.hasVal || Date.now() - new Date(x.asOf) > 35 * 864e5);
+        if (st.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>צ׳ק-אין חודשי</h2><div class="muted">${st.length} השקעות ללא עדכון שווי מהחודש האחרון.</div><button onclick="go('inv')">לעדכון עכשיו</button></div>`); }
     } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
@@ -233,11 +235,39 @@ const views = {
         <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון שווי"}</div></div>`).join("") : "עדיין אין השקעות.";
     } catch (e) { $("#list").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   },
-  goals() { V(`<div class="card"><h2>מטרות</h2><div class="muted">בקרוב: מטרות עם סכום יעד, תאריך והתקדמות.</div></div>`); },
+  async goals() {
+    if (S.gf) return goalForm();
+    V(`<button onclick="S.gf=1;render()">מטרה חדשה</button><div id="gl" class="muted" style="margin-top:14px">טוען…</div>`);
+    try {
+      const [g, L] = await Promise.all([SB.from("goals").select("*,goal_investments(investment_id,share_pct)").order("target_date"), loadAll()]);
+      if (g.error) throw g.error; if (!$("#gl")) return;
+      const by = Object.fromEntries(L.map(x => [x.id, x]));
+      $("#gl").innerHTML = g.data.length ? g.data.map(o => {
+        const cur = o.goal_investments.reduce((a, l) => a + (by[l.investment_id] ? by[l.investment_id].val * l.share_pct / 100 : 0), 0), pc = Math.min(100, cur / o.target_amount * 100);
+        const mo = o.target_date ? Math.max(1, Math.round((new Date(o.target_date) - new Date()) / 2629800000)) : 0;
+        return `<div class="card"><div style="display:flex;justify-content:space-between;align-items:center"><h2>${esc(o.name)}</h2><button class="ghost" style="width:auto;margin:0;padding:4px 10px" onclick="delGoal('${o.id}')">✕</button></div>
+          <div class="muted">${fmt(cur)} מתוך ${fmt(o.target_amount)}${o.target_date ? " · עד " + esc(o.target_date) : ""}</div>
+          <div style="height:10px;background:var(--line);border-radius:5px;margin:10px 0;overflow:hidden"><div style="height:100%;width:${pc}%;background:var(--accent)"></div></div>
+          <div class="muted">${pc.toFixed(0)}%${mo && cur < o.target_amount ? ` · כדי להגיע בזמן: כ-${fmt((o.target_amount - cur) / mo)} בחודש, בלי תשואה` : ""}</div></div>`;
+      }).join("") : "עדיין אין מטרות. הגדירו יעד, למשל הון עצמי לדירה.";
+    } catch (e) { $("#gl").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  },
+  tools() {
+    const t = S.tt || "calc", seg = `<div class="seg">${[["calc", "מחשבון"], ["mkt", "שוק"]].map(([k, l]) => `<button class="${t === k ? "on" : ""}" onclick="S.tt='${k}';render()">${l}</button>`).join("")}</div>`;
+    if (t === "mkt") return market(seg);
+    const f = (id, l, v) => `<div style="flex:1"><label>${l}</label><input id="c_${id}" inputmode="decimal" dir="ltr" value="${v}" oninput="drawCalc()"></div>`;
+    V(seg + `<div class="card"><h2>מחשבון ריבית דריבית</h2>
+      <div class="row">${f("init", "סכום התחלתי (₪)", 0)}${f("mo", "הפקדה חודשית (₪)", 1000)}</div>
+      <div class="row">${f("rate", "תשואה שנתית (%)", 7)}${f("yrs", "שנים", 20)}</div>
+      <div class="row">${f("step", "הגדלת הפקדה בשנה (%)", 0)}${f("fee", "דמי ניהול (%)", 0.5)}</div>
+      <div class="row">${f("infl", "אינפלציה (%)", 2.5)}${f("lump", "סכום חד-פעמי (₪)", 0)}</div>
+      <div class="row">${f("lumpYr", "בשנה מספר", 5)}</div></div><div id="cres"></div><div id="csc"></div>`);
+    drawCalc(); drawSc();
+  },
   more() {
     V(`<div class="card"><h2>שלום ${esc(S.m.display_name)}</h2><div class="muted">קוד להצטרפות בן/בת הזוג:</div>
       <div class="code">${esc(S.m.households.join_code)}</div></div>
-      <div class="card"><button class="ghost" onclick="signOut()">יציאה</button></div>`);
+      <div class="card"><button class="ghost" onclick="exportCsv()">ייצוא נתונים ל-CSV (נפתח ב-Excel)</button><button class="ghost" onclick="signOut()">יציאה</button></div>`);
   }
 };
 
@@ -292,6 +322,7 @@ function act(id, kind) {
     const r = kind === "valuation"
       ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: dt, source: "reported", source_label: "הוזן ידנית" })
       : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: dt });
+    const c = S.cur; if (kind !== "valuation" && !r.error && c && c.id === id && c.hasVal && dt === c.asOf) await SB.from("valuations").insert({ investment_id: id, value: c.val + (kind === "deposit" ? a : -a), as_of: dt, source: "estimate", source_label: "עודכן אוטומטית עם תנועה" });
     toast(r.error ? r.error.message : "נשמר ✓"); render();
   });
 }
@@ -355,6 +386,7 @@ function series(L, R, g) {
   for (let d = new Date(Date.UTC(st.getUTCFullYear(), st.getUTCMonth() + 1, 0)); d <= now; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 2, 0)))
     if ((d.getUTCMonth() + 1) % step === 0) ends.push(iso(d));
   if (ends[ends.length - 1] !== iso(now)) ends.push(iso(now));
+  if (ends[0] !== ds[0]) ends.unshift(ds[0]);
   return ends.map(e => {
     let tv = 0, td = 0;
     L.forEach(x => {
@@ -366,14 +398,16 @@ function series(L, R, g) {
     return { d: e, v: tv, dep: td };
   });
 }
-function drawHist() {
+function drawHist() { try { drawHist0(); } catch (e) { const el = $("#hist"); if (el) el.textContent = "שגיאה בגרף: " + e.message; } }
+function drawHist0() {
   const el = $("#hist"); if (!el) return;
   const g = S.hg || "m", ser = S.ser = series(S.L2, S.R, g), m = series(S.L2, S.R, "m"), n = m.length;
   const prof = p => p.v - p.dep, last = m[n - 1], yd = new Date(); yd.setUTCFullYear(yd.getUTCFullYear() - 1);
   const yp = [...m].reverse().find(p => p.d <= yd.toISOString().slice(0, 10));
   const stat = (l, p) => { const x = p ? prof(last) - prof(p) : null; return `<div style="flex:1"><div class="muted">${l}</div><div class="n" style="color:var(${x != null && x < 0 ? "--bad" : "--accent"})">${x == null ? "—" : fmt(x)}</div></div>`; };
   const seg = `<div class="seg">${[["m", "חודשי"], ["q", "רבעוני"], ["y", "שנתי"]].map(([k, l]) => `<button class="${g === k ? "on" : ""}" onclick="S.hg='${k}';drawHist()">${l}</button>`).join("")}</div>`;
-  if (ser.length < 2) { el.innerHTML = `<h2>התפתחות ההון</h2><div class="muted">הגרף יופיע אחרי שיהיו נתונים מיותר מנקודת זמן אחת. הוסיפו תאריך לעדכוני השווי וההפקדות.</div>`; return; }
+  if (ser.length < 2) { const p = ser[0] || { v: 0, dep: 0 }, hi = Math.max(p.v, p.dep, 1), bar = (l, v, c) => `<div style="margin:10px 0"><div class="muted">${l}: ${fmt(v)}</div><div style="height:12px;border-radius:6px;background:${c};width:${Math.max(2, v / hi * 100)}%"></div></div>`;
+    el.innerHTML = `<h2>התפתחות ההון</h2>${bar("הפקדות נטו", p.dep, "var(--muted)")}${bar("שווי", p.v, "var(--accent)")}<div class="muted">גרף ההתפתחות יופיע כשיהיו נתונים מתאריכים שונים.</div>`; return; }
   const W = 320, H = 150, P = 8, all = ser.flatMap(p => [p.v, p.dep]), hi = Math.max(...all, 1), lo = Math.max(0, Math.min(...all) * .85);
   S.X = i => P + i * (W - 2 * P) / (ser.length - 1); S.Y = v => H - P - (v - lo) / (hi - lo || 1) * (H - 2 * P);
   const path = k => ser.map((p, i) => (i ? "L" : "M") + S.X(i).toFixed(1) + " " + S.Y(p[k]).toFixed(1)).join("");
@@ -388,6 +422,76 @@ function showPt(i) {
   const p = S.ser[i], dot = $("#dot"); if (!dot) return;
   dot.setAttribute("cx", S.X(i)); dot.setAttribute("cy", S.Y(p.v));
   $("#tip").innerHTML = `<b>${fmt(p.v)}</b> <span class="muted">${esc(p.d)} · הפקדות ${fmt(p.dep)} · רווח ${fmt(p.v - p.dep)}</span>`;
+}
+
+/* ===== calculator ===== */
+function calc(p, fee) {
+  const mr = Math.pow(1 + (p.rate - fee) / 100, 1 / 12) - 1; let b = p.init, d = p.init, m = p.mo; const r = [{ y: 0, b, d }];
+  for (let y = 1; y <= p.yrs; y++) { for (let k = 0; k < 12; k++) { b = b * (1 + mr) + m; d += m; } if (y === p.lumpYr) { b += p.lump; d += p.lump; } r.push({ y, b, d }); m *= 1 + p.step / 100; }
+  return r;
+}
+function lines(a, b) {
+  const W = 320, H = 140, P = 8, hi = Math.max(...a, ...b, 1), n = a.length, X = i => P + i * (W - 2 * P) / Math.max(n - 1, 1), Y = v => H - P - v / hi * (H - 2 * P);
+  const path = s => s.map((v, i) => (i ? "L" : "M") + X(i).toFixed(1) + " " + Y(v).toFixed(1)).join("");
+  return `<svg viewBox="0 0 ${W} ${H}" dir="ltr" style="width:100%;display:block;margin:8px 0"><path d="${path(b)}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4"/><path d="${path(a)}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/></svg>`;
+}
+function readCalc() {
+  const g = k => parseFloat(($("#c_" + k).value || "").replace(/,/g, "")) || 0;
+  return { init: g("init"), mo: g("mo"), rate: g("rate"), yrs: Math.max(1, Math.min(60, Math.round(g("yrs")))), step: g("step"), lump: g("lump"), lumpYr: g("lumpYr"), fee: g("fee"), infl: g("infl") };
+}
+function drawCalc() {
+  const p = readCalc(), r = calc(p, p.fee), r0 = calc(p, 0), L = r[r.length - 1], real = L.b / Math.pow(1 + p.infl / 100, p.yrs);
+  S.cp = p; S.cf = L;
+  $("#cres").innerHTML = `<div class="card"><div class="muted">שווי סופי אחרי ${p.yrs} שנים</div><div class="big">${fmt(L.b)}</div>
+    <div class="row" style="margin-top:12px"><div><div class="muted">הופקד בפועל</div><div class="n">${fmt(L.d)}</div></div><div><div class="muted">נוצר מתשואה</div><div class="n">${fmt(L.b - L.d)}</div></div></div>
+    <div class="row" style="margin-top:12px"><div><div class="muted">שווי ריאלי (אחרי אינפלציה)</div><div class="n">${fmt(real)}</div></div><div><div class="muted">עלות דמי הניהול</div><div class="n">${fmt(r0[r0.length - 1].b - L.b)}</div></div></div>
+    ${lines(r.map(x => x.b), r.map(x => x.d))}<div class="muted">קו מלא: שווי · מקווקו: הפקדות. תחזית תיאורטית, לא הבטחה.</div>
+    <button class="ghost" onclick="saveSc()">שמירת התרחיש להשוואה</button></div>`;
+}
+function saveSc() { const p = S.cp, f = S.cf; S.sc = [...(S.sc || []), { mo: p.mo, rate: p.rate, yrs: p.yrs, b: f.b, d: f.d }].slice(-4); drawSc(); toast("נשמר להשוואה"); }
+function drawSc() {
+  const el = $("#csc"); if (!el || !(S.sc || []).length) return;
+  el.innerHTML = `<div class="card"><h2>השוואת תרחישים</h2>${S.sc.map((s, i) => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line)"><div><b>תרחיש ${i + 1}</b><div class="muted">${fmt(s.mo)}/חודש · ${s.rate}% · ${s.yrs} שנים</div></div><div style="text-align:end"><b>${fmt(s.b)}</b><div class="muted">רווח ${fmt(s.b - s.d)}</div></div></div>`).join("")}<button class="ghost" onclick="S.sc=[];render()">ניקוי</button></div>`;
+}
+/* ===== market ===== */
+async function market(seg) {
+  V(seg + `<div class="card"><h2>שערי מטבע</h2><div id="fx" class="muted">טוען…</div></div><div class="card"><h2>מדדים</h2><div id="ix" class="muted">טוען…</div></div>`);
+  try {
+    const q = async c => (await fetch(`https://api.frankfurter.dev/v2/providers/boi/rate/${c}/ils`)).json();
+    const [u, e] = await Promise.all([q("usd"), q("eur")]);
+    if (!$("#fx")) return;
+    $("#fx").innerHTML = [["דולר", u], ["יורו", e]].map(([n, d]) => `<div style="display:flex;justify-content:space-between;padding:8px 0"><b>${n}</b><b>₪${Number(d.rate).toFixed(3)}</b></div>`).join("") + `<div class="muted">שער יציג של בנק ישראל, מתעדכן פעם ביום${u.date ? " · " + esc(u.date) : ""}.</div>`;
+  } catch (x) { if ($("#fx")) $("#fx").textContent = "שערי המטבע לא זמינים כרגע."; }
+  try {
+    const r = await SB.from("market_series").select("symbol,as_of,value").order("as_of", { ascending: false }).limit(300); if (r.error) throw r.error;
+    const by = {}; (r.data || []).forEach(x => (by[x.symbol] = by[x.symbol] || []).push(x));
+    const ks = Object.keys(by); if (!$("#ix")) return;
+    $("#ix").innerHTML = ks.length ? ks.map(k => { const a = by[k], c = a[1] ? (a[0].value / a[1].value - 1) * 100 : null; return `<div style="display:flex;justify-content:space-between;padding:8px 0"><b>${esc(k)}</b><span><b>${Number(a[0].value).toLocaleString("he-IL")}</b> <span class="muted">${c == null ? "" : (c >= 0 ? "▲" : "▼") + Math.abs(c).toFixed(2) + "%"} · ${esc(a[0].as_of)}</span></span></div>`; }).join("")
+      : "עדיין אין נתוני מדדים. מדדים (S&P 500, נאסד״ק ועוד) דורשים משימה אוטומטית בצד שרת, כי אתרי הנתונים חוסמים גישה ישירה מהדפדפן. זה השלב הבא.";
+  } catch (x) { if ($("#ix")) $("#ix").textContent = "לא ניתן לטעון מדדים."; }
+}
+/* ===== goals ===== */
+async function goalForm() {
+  V("טוען…"); const L = await loadAll();
+  V(`<button class="ghost" onclick="S.gf=0;render()">→ ביטול</button><div class="card" style="margin-top:12px"><h2>מטרה חדשה</h2>
+    <label>שם המטרה</label><input id="g_n"><label>סכום יעד (₪)</label><input id="g_a" inputmode="decimal" dir="ltr">
+    <label>תאריך יעד</label><input id="g_d" type="date" dir="ltr"><label>טווח</label><select id="g_h"><option value="medium">בינוני</option><option value="long">ארוך</option><option value="short">קצר</option></select>
+    <label>השקעות שמשויכות למטרה</label>${L.map(x => `<label style="display:flex;gap:8px;align-items:center;color:var(--text);padding:6px 0"><input type="checkbox" class="g_c" value="${x.id}" style="width:auto;margin:0"> ${esc(x.name)}</label>`).join("") || '<div class="muted">אין עדיין השקעות</div>'}
+    <button onclick="saveGoal()" style="margin-top:12px">שמירה</button></div>`);
+}
+async function saveGoal() {
+  const n = $("#g_n").value.trim(), a = parseFloat($("#g_a").value.replace(/,/g, "")); if (!n || !(a > 0)) return alert("יש להזין שם וסכום יעד");
+  const r = await SB.from("goals").insert({ household_id: S.m.household_id, name: n, horizon: $("#g_h").value, target_amount: a, target_date: $("#g_d").value || null }).select("id").single();
+  if (r.error) return alert(r.error.message);
+  const ids = [...document.querySelectorAll(".g_c:checked")].map(e => e.value);
+  if (ids.length) await SB.from("goal_investments").insert(ids.map(i => ({ goal_id: r.data.id, investment_id: i })));
+  S.gf = 0; toast("נשמר ✓"); render();
+}
+async function delGoal(id) { if (!confirm("למחוק את המטרה?")) return; await SB.from("goals").delete().eq("id", id); render(); }
+async function exportCsv() {
+  const [L, R] = await Promise.all([loadAll(), rawData()]), nm = Object.fromEntries(L.map(x => [x.id, x.name])), q = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
+  const rows = [["סוג רשומה", "השקעה", "תאריך", "סכום"], ...R.t.map(e => [e.kind === "deposit" ? "הפקדה" : "משיכה", nm[e.investment_id], e.occurred_on, e.amount]), ...R.v.map(e => ["עדכון שווי", nm[e.investment_id], e.as_of, e.value])];
+  const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" })); a.download = "wealth.csv"; a.click();
 }
 
 boot();
