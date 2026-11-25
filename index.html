@@ -169,13 +169,13 @@ const opt = (a, k, l) => (a || []).map(x => `<option value="${esc(x[k])}">${esc(
 async function loadAll() {
   const [i, t, v] = await Promise.all([
     SB.from("investments").select("*,institutions(name),asset_types(name)").eq("archived", false).order("created_at"),
-    SB.from("transactions").select("investment_id,kind,amount"),
+    SB.from("transactions").select("investment_id,kind,amount,occurred_on"),
     SB.from("valuations").select("investment_id,value,as_of,created_at").order("as_of", { ascending: false }).order("created_at", { ascending: false })]);
   const err = i.error || t.error || v.error; if (err) throw err;
   const dep = {}, val = {};
   t.data.forEach(x => dep[x.investment_id] = (dep[x.investment_id] || 0) + (x.kind === "deposit" ? 1 : -1) * Number(x.amount));
   v.data.forEach(x => { if (!(x.investment_id in val)) val[x.investment_id] = x; });
-  return i.data.map(r => { const d = dep[r.id] || 0, l = val[r.id]; return { ...r, dep: d, val: l ? Number(l.value) : d, asOf: l && l.as_of, hasVal: !!l }; });
+  return i.data.map(r => { const d = dep[r.id] || 0, l = val[r.id]; const aft = l ? t.data.filter(z => z.investment_id === r.id && z.occurred_on > l.as_of).reduce((a, z) => a + (z.kind === "deposit" ? 1 : -1) * Number(z.amount), 0) : 0; return { ...r, dep: d, val: l ? Number(l.value) + aft : d, asOf: l && l.as_of, hasVal: !!l }; });
 }
 
 async function members() {
@@ -189,13 +189,13 @@ function donut(items) {
   return `<div class="donutw"><svg viewBox="0 0 42 42" width="130" height="130">${segs}</svg><div class="leg">${items.map((x, i) => `<div><i style="background:${C[i % 8]}"></i>${esc(x.n)}<b>${Math.round(x.v / T * 100)}%</b></div>`).join("")}</div></div>`;
 }
 function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
-function sheet(title, label, cb, def) {
+function sheet(title, label, cb, def, dd) {
   const d = document.createElement("div"); d.className = "ov";
-  d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
+  d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><label>תאריך</label><input id="sd" type="date" dir="ltr" value="${dd || today()}"><button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
   document.body.appendChild(d);
   const c = () => d.remove(); d.onclick = e => { if (e.target === d) c(); };
   $("#no").onclick = c;
-  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; c(); await cb(a); };
+  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; const dt = $("#sd").value || today(); c(); await cb(a, dt); };
   if (def !== undefined) $("#sv").value = def; $("#sv").focus();
 }
 
@@ -218,6 +218,7 @@ const views = {
         <div class="row"><div class="card"><div class="muted">הפקדות נטו</div><div class="n">${fmt(d)}</div></div>
           <div class="card"><div class="muted">רווח / הפסד</div><div class="n" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</div></div></div>
         ${items.length ? `<div class="card"><h2>חלוקה לפי סוג</h2>${donut(items)}</div>` : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`}`);
+      if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist(); }
     } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
@@ -251,12 +252,12 @@ async function detail(id) {
   const ev = [...(tr.data || []).map(e => ({ t: "tx", id: e.id, l: e.kind === "deposit" ? "הפקדה" : "משיכה", a: Number(e.amount), d: e.occurred_on })),
     ...(va.data || []).map(e => ({ t: "val", id: e.id, l: "עדכון שווי", a: Number(e.value), d: e.as_of }))].sort((a, b) => b.d.localeCompare(a.d));
   const row = e => `<div style="display:flex;align-items:center;gap:8px;padding:12px 0;border-top:1px solid var(--line)">
-    <div style="flex:1;cursor:pointer" onclick="editEv('${e.t}','${e.id}',${e.a})"><b>${e.l}</b><div class="muted">${esc(e.d)}</div></div>
+    <div style="flex:1;cursor:pointer" onclick="editEv('${e.t}','${e.id}',${e.a},'${e.d}')"><b>${e.l}</b><div class="muted">${esc(e.d)}</div></div>
     <b>${fmt(e.a)}</b><button class="ghost" style="width:auto;margin:0;padding:6px 10px" onclick="delEv('${e.t}','${e.id}')" aria-label="מחיקה">✕</button></div>`;
   V(`<button class="ghost" onclick="S.sel=null;render()">→ חזרה</button>
     <div class="card" style="margin-top:12px"><h2>${esc(x.name)}</h2><div class="big">${fmt(x.val)}</div>
       <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: הוזן ידנית" : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
-      <p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
+      ${x.started_on ? `<div class="muted">תחילת השקעה: ${esc(x.started_on)}</div>` : ""}<p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
     <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>
@@ -265,12 +266,12 @@ async function detail(id) {
     <button class="ghost" onclick="S.ed=S.cur;S.sel=null;S.add=1;render()">עריכת פרטי ההשקעה</button>
     <button class="ghost" style="color:var(--bad)" onclick="delInv('${id}')">מחיקת ההשקעה</button>`);
 }
-function editEv(t, id, cur) {
-  sheet(t === "tx" ? "עריכת תנועה" : "עריכת שווי", "סכום (₪)", async a => {
+function editEv(t, id, cur, dd) {
+  sheet(t === "tx" ? "עריכת תנועה" : "עריכת שווי", "סכום (₪)", async (a, dt) => {
     if (t === "tx" && a === 0) return;
-    const r = t === "tx" ? await SB.from("transactions").update({ amount: a }).eq("id", id) : await SB.from("valuations").update({ value: a }).eq("id", id);
+    const r = t === "tx" ? await SB.from("transactions").update({ amount: a, occurred_on: dt }).eq("id", id) : await SB.from("valuations").update({ value: a, as_of: dt }).eq("id", id);
     toast(r.error ? r.error.message : "עודכן ✓"); render();
-  }, cur);
+  }, cur, dd);
 }
 async function delEv(t, id) {
   if (!confirm("למחוק את הרשומה?")) return;
@@ -286,11 +287,11 @@ async function delInv(id) {
 function cancelForm() { const e = S.ed; S.add = 0; S.ed = null; S.dn = ""; S.sel = e ? e.id : null; render(); }
 function act(id, kind) {
   const T = { deposit: ["הפקדה", "סכום ההפקדה (₪)"], withdrawal: ["משיכה", "סכום המשיכה (₪)"], valuation: ["עדכון שווי", "השווי הנוכחי (₪)"] }[kind];
-  sheet(T[0], T[1], async a => {
+  sheet(T[0], T[1], async (a, dt) => {
     if (kind !== "valuation" && a === 0) return;
     const r = kind === "valuation"
-      ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: today(), source: "reported", source_label: "הוזן ידנית" })
-      : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: today() });
+      ? await SB.from("valuations").insert({ investment_id: id, value: a, as_of: dt, source: "reported", source_label: "הוזן ידנית" })
+      : await SB.from("transactions").insert({ investment_id: id, kind, amount: a, occurred_on: dt });
     toast(r.error ? r.error.message : "נשמר ✓"); render();
   });
 }
@@ -312,10 +313,11 @@ async function addForm() {
     <label>בעלות</label><select id="f_o"><option value="">משותף</option>${opt(mem.data, "user_id", "display_name")}</select><br><br>
     <label>טווח</label><select id="f_h"><option value="long">ארוך</option><option value="medium">בינוני</option><option value="short">קצר</option></select><br><br>
     <label>מסלול (אופציונלי)</label><input id="f_k">
+    <label>תאריך תחילת ההשקעה</label><input id="f_s" type="date" dir="ltr">
     <label>דמי ניהול שנתיים באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
     <button onclick="saveInv()">שמירה</button></div>`);
   if (S.ed) { const e = S.ed; $("#f_i").value = e.institution_id || ""; $("#f_t").value = e.type_id || ""; $("#f_o").value = e.owner_user_id || "";
-    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
+    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_s").value = e.started_on || ""; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
 }
 async function newItem(tbl) {
   S.dn = $("#f_n").value;
@@ -334,12 +336,58 @@ async function seed() {
 async function saveInv() {
   const n = $("#f_n").value.trim(); if (!n) return alert("יש להזין שם");
   const row = { name: n, institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
-    horizon: $("#f_h").value, track: $("#f_k").value || null, fee_pct: parseFloat($("#f_f").value) || null };
+    horizon: $("#f_h").value, track: $("#f_k").value || null, started_on: $("#f_s").value || null, fee_pct: parseFloat($("#f_f").value) || null };
   const r = S.ed ? await SB.from("investments").update(row).eq("id", S.ed.id)
                  : await SB.from("investments").insert({ household_id: S.m.household_id, ...row });
   if (r.error) return alert(r.error.message);
   const back = S.ed ? S.ed.id : null;
   S.add = 0; S.ed = null; S.dn = ""; S.sel = back; toast("נשמר ✓"); render();
+}
+
+async function rawData() {
+  const [t, v] = await Promise.all([SB.from("transactions").select("investment_id,kind,amount,occurred_on"), SB.from("valuations").select("investment_id,value,as_of")]);
+  return { t: t.data || [], v: v.data || [] };
+}
+function series(L, R, g) {
+  const ids = new Set(L.map(x => x.id)), t = R.t.filter(e => ids.has(e.investment_id)), v = R.v.filter(e => ids.has(e.investment_id));
+  const ds = [...t.map(e => e.occurred_on), ...v.map(e => e.as_of)].sort(); if (!ds.length) return [];
+  const iso = d => d.toISOString().slice(0, 10), st = new Date(ds[0]), now = new Date(), step = g === "y" ? 12 : g === "q" ? 3 : 1, ends = [];
+  for (let d = new Date(Date.UTC(st.getUTCFullYear(), st.getUTCMonth() + 1, 0)); d <= now; d = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 2, 0)))
+    if ((d.getUTCMonth() + 1) % step === 0) ends.push(iso(d));
+  if (ends[ends.length - 1] !== iso(now)) ends.push(iso(now));
+  return ends.map(e => {
+    let tv = 0, td = 0;
+    L.forEach(x => {
+      const dep = t.filter(r => r.investment_id === x.id && r.occurred_on <= e).reduce((a, r) => a + (r.kind === "deposit" ? 1 : -1) * Number(r.amount), 0);
+      const vs = v.filter(r => r.investment_id === x.id && r.as_of <= e).sort((a, b) => b.as_of.localeCompare(a.as_of))[0];
+      const aft = vs ? t.filter(r => r.investment_id === x.id && r.occurred_on > vs.as_of && r.occurred_on <= e).reduce((a, r) => a + (r.kind === "deposit" ? 1 : -1) * Number(r.amount), 0) : 0;
+      td += dep; tv += vs ? Number(vs.value) + aft : dep;
+    });
+    return { d: e, v: tv, dep: td };
+  });
+}
+function drawHist() {
+  const el = $("#hist"); if (!el) return;
+  const g = S.hg || "m", ser = S.ser = series(S.L2, S.R, g), m = series(S.L2, S.R, "m"), n = m.length;
+  const prof = p => p.v - p.dep, last = m[n - 1], yd = new Date(); yd.setUTCFullYear(yd.getUTCFullYear() - 1);
+  const yp = [...m].reverse().find(p => p.d <= yd.toISOString().slice(0, 10));
+  const stat = (l, p) => { const x = p ? prof(last) - prof(p) : null; return `<div style="flex:1"><div class="muted">${l}</div><div class="n" style="color:var(${x != null && x < 0 ? "--bad" : "--accent"})">${x == null ? "—" : fmt(x)}</div></div>`; };
+  const seg = `<div class="seg">${[["m", "חודשי"], ["q", "רבעוני"], ["y", "שנתי"]].map(([k, l]) => `<button class="${g === k ? "on" : ""}" onclick="S.hg='${k}';drawHist()">${l}</button>`).join("")}</div>`;
+  if (ser.length < 2) { el.innerHTML = `<h2>התפתחות ההון</h2><div class="muted">הגרף יופיע אחרי שיהיו נתונים מיותר מנקודת זמן אחת. הוסיפו תאריך לעדכוני השווי וההפקדות.</div>`; return; }
+  const W = 320, H = 150, P = 8, all = ser.flatMap(p => [p.v, p.dep]), hi = Math.max(...all, 1), lo = Math.max(0, Math.min(...all) * .85);
+  S.X = i => P + i * (W - 2 * P) / (ser.length - 1); S.Y = v => H - P - (v - lo) / (hi - lo || 1) * (H - 2 * P);
+  const path = k => ser.map((p, i) => (i ? "L" : "M") + S.X(i).toFixed(1) + " " + S.Y(p[k]).toFixed(1)).join("");
+  el.innerHTML = `<h2>התפתחות ההון</h2><div style="display:flex;gap:12px;margin-bottom:6px">${stat("רווח בחודש האחרון", m[n - 2])}${stat("רווח ב־12 חודשים", yp)}</div>${seg}
+    <svg viewBox="0 0 ${W} ${H}" dir="ltr" style="width:100%;display:block" onclick="pickPt(event)"><path d="${path("dep")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4"/>
+    <path d="${path("v")}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle id="dot" r="5" fill="var(--accent)"/></svg>
+    <div class="muted" style="margin:6px 0">קו מלא: שווי · מקווקו: הפקדות נטו. הקישו על הגרף לפרטים.</div><div id="tip"></div>`;
+  showPt(ser.length - 1);
+}
+function pickPt(e) { const r = e.currentTarget.getBoundingClientRect(); showPt(Math.max(0, Math.min(S.ser.length - 1, Math.round((e.clientX - r.left) / r.width * (S.ser.length - 1))))); }
+function showPt(i) {
+  const p = S.ser[i], dot = $("#dot"); if (!dot) return;
+  dot.setAttribute("cx", S.X(i)); dot.setAttribute("cy", S.Y(p.v));
+  $("#tip").innerHTML = `<b>${fmt(p.v)}</b> <span class="muted">${esc(p.d)} · הפקדות ${fmt(p.dep)} · רווח ${fmt(p.v - p.dep)}</span>`;
 }
 
 boot();
