@@ -188,7 +188,8 @@ async function loadAll() {
   return i.data.map(r => {
     const d = dep[r.id] || 0, l = val[r.id], aft = l ? t.data.filter(z => z.investment_id === r.id && z.occurred_on > l.as_of).reduce((a, z) => a + (z.kind === "deposit" ? 1 : -1) * Number(z.amount), 0) : 0;
     let v = l ? Number(l.value) + aft : d, est = false;
-    if (l && r.valuation_mode === "index" && S.mk) { const f = idxAt(l.as_of); if (f) { v = Number(l.value) * (S.mk[S.mk.length - 1][1] / f) + aft; est = true; } }
+    if (l && r.valuation_mode === "index" && S.mk) { const f = idxAt(l.as_of); if (f) { v = Number(l.value) * (S.mk[S.mk.length - 1][1] / f) + aft; est = true;
+      const fr = (r.fee_pct || 0) / 100; if (r.fee_basis === "profit") { const gn = v - (Number(l.value) + aft); if (gn > 0) v -= gn * fr; } else v *= 1 - fr * (Date.now() - new Date(l.as_of)) / 31557600000; } }
     return { ...r, dep: d, val: v, est, asOf: l && l.as_of, srcLabel: l && l.source_label, hasVal: !!l };
   });
 }
@@ -234,21 +235,18 @@ const views = {
           <div class="card"><div class="muted">רווח / הפסד</div><div class="n" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</div></div></div>
         ${items.length ? `<div class="card"><h2>חלוקה לפי סוג</h2>${donut(items)}</div>` : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`}`);
       if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist();
-        const st = L.filter(x => !x.hasVal || Date.now() - new Date(x.asOf) > 35 * 864e5);
-        if (st.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>צ׳ק-אין חודשי</h2><div class="muted">${st.length} השקעות ללא עדכון שווי מהחודש האחרון.</div><button onclick="go('inv')">לעדכון עכשיו</button></div>`); }
+        const DY = { monthly: 35, quarterly: 100, yearly: 380 }, st = L.filter(x => { const c = x.report_cadence || "monthly"; return c !== "none" && (!x.hasVal || Date.now() - new Date(x.asOf) > DY[c] * 864e5); });
+        if (st.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>דוחות לעדכון</h2>${st.slice(0, 6).map(x => `<div style="padding:10px 0;border-top:1px solid var(--line);cursor:pointer" onclick="S.tab='inv';S.sel='${x.id}';render()"><b>${esc(x.name)}</b> <span class="muted">· ${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון"}</span></div>`).join("")}</div>`);
+        const fee = L.reduce((a, x) => a + annFee(x), 0);
+        if (fee > 0) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><div class="muted">דמי ניהול שנתיים משוערים</div><div class="n">${fmt(fee)}</div></div>`); }
     } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
     if (S.sel) return detail(S.sel);
     if (S.add) return addForm();
-    V(`<button onclick="S.add=1;render()">➕ השקעה חדשה</button><div id="list" class="muted" style="margin-top:14px">טוען…</div>`);
-    try {
-      const L = await loadAll(); if (!$("#list")) return;
-      $("#list").innerHTML = L.length ? L.map(x => `<div class="card" onclick="S.sel='${x.id}';render()"><b>${esc(x.name)}</b>
-        <div class="muted">${esc(x.institutions && x.institutions.name || "")} · ${esc(x.asset_types && x.asset_types.name || "")}</div>
-        <div class="big" style="font-size:24px">${fmt(x.val)}</div>
-        <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון שווי"}</div></div>`).join("") : "עדיין אין השקעות.";
-    } catch (e) { $("#list").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+    V(`<div id="ih" class="muted" style="padding:20px 0">טוען…</div>`);
+    try { const [L, mm] = await Promise.all([loadAll(), SB.from("household_members").select("user_id,display_name")]); S.IL = L; S.mem = mm.data || []; if ($("#ih")) drawInv(); }
+    catch (e) { $("#ih").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   },
   async goals() {
     if (S.gf) return goalForm();
@@ -275,6 +273,7 @@ const views = {
       <div class="row">${f("init", "סכום התחלתי (₪)", 0)}${f("mo", "הפקדה חודשית (₪)", 1000)}</div>
       <div class="row">${f("rate", "תשואה שנתית (%)", 7)}${f("yrs", "שנים", 20)}</div>
       <div class="row">${f("step", "הגדלת הפקדה בשנה (%)", 0)}${f("fee", "דמי ניהול (%)", 0.5)}</div>
+      <div class="row"><div style="flex:1"><label>דמי הניהול מחושבים</label><select id="c_fb" onchange="drawCalc()"><option value="balance">מהצבירה (שנתי)</option><option value="profit">מהרווח</option></select></div></div>
       <div class="row">${f("infl", "אינפלציה (%)", 2.5)}${f("lump", "סכום חד-פעמי (₪)", 0)}</div>
       <div class="row">${f("lumpYr", "בשנה מספר", 5)}</div></div><div id="cres"></div><div id="csc"></div>`);
     drawCalc(); drawSc();
@@ -302,7 +301,7 @@ async function detail(id) {
   V(`<button class="ghost" onclick="S.sel=null;render()">→ חזרה</button>
     <div class="card" style="margin-top:12px"><h2>${esc(x.name)}</h2><div class="big">${fmt(x.val)}</div>
       <div class="muted">${x.hasVal ? "עודכן " + esc(x.asOf) + " · מקור: " + esc(x.srcLabel || "הוזן ידנית") + (x.est ? " · השווי הנוכחי הוא הערכה לפי S&P 500, לא שווי רשמי" : "") : "אין עדכון שווי, מוצג סכום ההפקדות"}</div>
-      ${x.started_on ? `<div class="muted">תחילת השקעה: ${esc(x.started_on)}</div>` : ""}<p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p></div>
+      ${x.started_on ? `<div class="muted">תחילת השקעה: ${esc(x.started_on)}</div>` : ""}<p>הפקדות נטו: <b>${fmt(x.dep)}</b><br>רווח / הפסד: <b>${fmt(x.val - x.dep)}</b></p>${x.fee_pct ? `<div class="muted">דמי ניהול משוערים בשנה: <b>${fmt(annFee(x))}</b> (${x.fee_pct}% ${x.fee_basis === "profit" ? "מהרווח" : "מהצבירה"})</div>` : ""}</div>
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
     <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>
@@ -361,11 +360,13 @@ async function addForm() {
     <label>מסלול (אופציונלי)</label><input id="f_k">
     <label>חישוב שווי</label><select id="f_m"><option value="manual">ידני, לפי דוחות שאני מזין</option><option value="index">צמוד ל-S&P 500, הערכה בין דוחות</option></select>
     <label>תאריך תחילת ההשקעה</label><input id="f_s" type="date" dir="ltr">
-    <label>דמי ניהול שנתיים באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
+    <label>דמי ניהול באחוזים (אופציונלי)</label><input id="f_f" inputmode="decimal" dir="ltr">
+    <label>דמי הניהול מחושבים</label><select id="f_fb"><option value="balance">מהצבירה (שנתי)</option><option value="profit">מהרווח</option></select>
+    <label>תדירות דוחות מבית ההשקעות</label><select id="f_rc"><option value="monthly">חודשי</option><option value="quarterly">רבעוני</option><option value="yearly">שנתי</option><option value="none">ללא תזכורת</option></select>
     <button onclick="saveInv()">שמירה</button></div>`);
   ["f_n", "f_k"].forEach(k => $("#" + k).addEventListener("input", autoMode));
   if (S.ed) { const e = S.ed; $("#f_i").value = e.institution_id || ""; $("#f_t").value = e.type_id || ""; $("#f_o").value = e.owner_user_id || "";
-    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_s").value = e.started_on || ""; $("#f_m").value = e.valuation_mode === "index" ? "index" : "manual"; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
+    $("#f_h").value = e.horizon; $("#f_k").value = e.track || ""; $("#f_s").value = e.started_on || ""; $("#f_m").value = e.valuation_mode === "index" ? "index" : "manual"; $("#f_fb").value = e.fee_basis || "balance"; $("#f_rc").value = e.report_cadence || "monthly"; $("#f_f").value = e.fee_pct == null ? "" : e.fee_pct; }
 }
 async function newItem(tbl) {
   S.dn = $("#f_n").value;
@@ -385,6 +386,8 @@ async function saveInv() {
   const n = $("#f_n").value.trim(); if (!n) return alert("יש להזין שם");
   const row = { name: n, institution_id: $("#f_i").value || null, type_id: $("#f_t").value || null, owner_user_id: $("#f_o").value || null,
     horizon: $("#f_h").value, track: $("#f_k").value || null, started_on: $("#f_s").value || null, valuation_mode: $("#f_m").value, benchmark_symbol: $("#f_m").value === "index" ? "SPX" : null, fee_pct: parseFloat($("#f_f").value) || null };
+  if ($("#f_fb").value !== "balance" || (S.ed && S.ed.fee_basis !== undefined)) row.fee_basis = $("#f_fb").value;
+  if ($("#f_rc").value !== "monthly" || (S.ed && S.ed.report_cadence !== undefined)) row.report_cadence = $("#f_rc").value;
   const r = S.ed ? await SB.from("investments").update(row).eq("id", S.ed.id)
                  : await SB.from("investments").insert({ household_id: S.m.household_id, ...row });
   if (r.error) return alert(r.error.message);
@@ -442,9 +445,15 @@ function showPt(i) {
 }
 
 /* ===== calculator ===== */
-function calc(p, fee) {
-  const mr = Math.pow(1 + (p.rate - fee) / 100, 1 / 12) - 1; let b = p.init, d = p.init, m = p.mo; const r = [{ y: 0, b, d }];
-  for (let y = 1; y <= p.yrs; y++) { for (let k = 0; k < 12; k++) { b = b * (1 + mr) + m; d += m; } if (y === p.lumpYr) { b += p.lump; d += p.lump; } r.push({ y, b, d }); m *= 1 + p.step / 100; }
+function calc(p, fee, fb) {
+  const mr = Math.pow(1 + (fb === "profit" ? p.rate : p.rate - fee) / 100, 1 / 12) - 1; let b = p.init, d = p.init, m = p.mo; const r = [{ y: 0, b, d }];
+  for (let y = 1; y <= p.yrs; y++) {
+    const b0 = b, d0 = d;
+    for (let k = 0; k < 12; k++) { b = b * (1 + mr) + m; d += m; }
+    if (y === p.lumpYr) { b += p.lump; d += p.lump; }
+    if (fb === "profit") { const gain = b - b0 - (d - d0); if (gain > 0) b -= gain * fee / 100; }
+    r.push({ y, b, d }); m *= 1 + p.step / 100;
+  }
   return r;
 }
 function lines(a, b) {
@@ -454,10 +463,10 @@ function lines(a, b) {
 }
 function readCalc() {
   const g = k => parseFloat(($("#c_" + k).value || "").replace(/,/g, "")) || 0;
-  return { init: g("init"), mo: g("mo"), rate: g("rate"), yrs: Math.max(1, Math.min(60, Math.round(g("yrs")))), step: g("step"), lump: g("lump"), lumpYr: g("lumpYr"), fee: g("fee"), infl: g("infl") };
+  return { init: g("init"), mo: g("mo"), rate: g("rate"), yrs: Math.max(1, Math.min(60, Math.round(g("yrs")))), step: g("step"), lump: g("lump"), lumpYr: g("lumpYr"), fee: g("fee"), infl: g("infl"), fb: $("#c_fb") ? $("#c_fb").value : "balance" };
 }
 function drawCalc() {
-  const p = readCalc(), r = calc(p, p.fee), r0 = calc(p, 0), L = r[r.length - 1], real = L.b / Math.pow(1 + p.infl / 100, p.yrs);
+  const p = readCalc(), r = calc(p, p.fee, p.fb), r0 = calc(p, 0, p.fb), L = r[r.length - 1], real = L.b / Math.pow(1 + p.infl / 100, p.yrs);
   S.cp = p; S.cf = L;
   $("#cres").innerHTML = `<div class="card"><div class="muted">שווי סופי אחרי ${p.yrs} שנים</div><div class="big">${fmt(L.b)}</div>
     <div class="row" style="margin-top:12px"><div><div class="muted">הופקד בפועל</div><div class="n">${fmt(L.d)}</div></div><div><div class="muted">נוצר מתשואה</div><div class="n">${fmt(L.b - L.d)}</div></div></div>
@@ -518,6 +527,22 @@ async function exportCsv() {
   const [L, R] = await Promise.all([loadAll(), rawData()]), nm = Object.fromEntries(L.map(x => [x.id, x.name])), q = v => `"${String(v == null ? "" : v).replace(/"/g, '""')}"`;
   const rows = [["סוג רשומה", "השקעה", "תאריך", "סכום"], ...R.t.map(e => [e.kind === "deposit" ? "הפקדה" : "משיכה", nm[e.investment_id], e.occurred_on, e.amount]), ...R.v.map(e => ["עדכון שווי", nm[e.investment_id], e.as_of, e.value])];
   const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob(["\ufeff" + rows.map(r => r.map(q).join(",")).join("\n")], { type: "text/csv" })); a.download = "wealth.csv"; a.click();
+}
+
+const HZ = { short: "טווח קצר", medium: "טווח בינוני", long: "טווח ארוך" }, PAL = ["#4F46E5", "#0D9488", "#F59E0B", "#EC4899", "#8B5CF6", "#22C55E", "#06B6D4", "#F97316"];
+const annFee = x => { const f = (x.fee_pct || 0) / 100; return x.fee_basis === "profit" ? Math.max(0, x.val - x.dep) * f : x.val * f; };
+const setIg = k => { S.ig = k; drawInv(); };
+function drawInv() {
+  const g = S.ig || "type", L = S.IL, nm = Object.fromEntries(S.mem.map(m => [m.user_id, m.display_name]));
+  const key = x => g === "type" ? (x.asset_types && x.asset_types.name) || "ללא סוג" : g === "horizon" ? HZ[x.horizon] || "—" : (x.institutions && x.institutions.name) || "ללא בית השקעות";
+  const G = {}; L.forEach(x => (G[key(x)] = G[key(x)] || []).push(x));
+  const gr = Object.entries(G).map(([k, a]) => ({ k, a, v: a.reduce((s, x) => s + x.val, 0) })).sort((a, b) => b.v - a.v), tot = gr.reduce((s, x) => s + x.v, 0);
+  const seg = `<div class="seg">${[["type", "לפי סוג"], ["horizon", "לפי ייעוד וטווח"], ["inst", "לפי בית השקעות"]].map(([k, l]) => `<button class="${g === k ? "on" : ""}" onclick="setIg('${k}')">${l}</button>`).join("")}</div>`;
+  $("#ih").innerHTML = `<button onclick="S.add=1;render()">הוספת השקעה</button>${seg}` + (L.length ? `
+    <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;margin:6px 0 4px">${gr.map((x, i) => `<i style="flex:${Math.max(x.v, 0.01)};background:${PAL[i % 8]}"></i>`).join("")}</div>` +
+    gr.map((x, i) => `<div style="margin:20px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${PAL[i % 8]}"></span><b style="flex:1">${esc(x.k)}</b><b>${fmt(x.v)}</b><span class="muted" style="min-width:38px;text-align:end">${tot ? (x.v / tot * 100).toFixed(0) : 0}%</span></div>` +
+      x.a.map(y => { const p = y.val - y.dep; return `<div class="card" style="border-inline-start:4px solid ${PAL[i % 8]};cursor:pointer;padding:14px 16px;margin-bottom:8px" onclick="S.sel='${y.id}';render()"><div style="display:flex;justify-content:space-between;gap:10px"><div><b>${esc(y.name)}</b><div class="muted">${esc(g === "inst" ? (y.asset_types && y.asset_types.name) || "" : (y.institutions && y.institutions.name) || "")} · ${y.owner_user_id ? esc(nm[y.owner_user_id] || "") : "משותף"}${g === "horizon" ? "" : " · " + (HZ[y.horizon] || "")}${y.est ? " · הערכה" : ""}</div></div><div style="text-align:end"><b>${fmt(y.val)}</b><div class="muted" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${p >= 0 ? "+" : "−"}${fmt(Math.abs(p))}</div></div></div></div>`; }).join("")).join("")
+    : `<div class="muted" style="margin-top:16px">עדיין אין השקעות. הוסיפו את הראשונה.</div>`);
 }
 
 boot();
