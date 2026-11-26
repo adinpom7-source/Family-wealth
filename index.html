@@ -205,13 +205,13 @@ function donut(items) {
   return `<div class="donutw"><svg viewBox="0 0 42 42" width="130" height="130">${segs}</svg><div class="leg">${items.map((x, i) => `<div><i style="background:${C[i % 8]}"></i>${esc(x.n)}<b>${Math.round(x.v / T * 100)}%</b></div>`).join("")}</div></div>`;
 }
 function toast(m) { const t = document.createElement("div"); t.className = "toast"; t.textContent = m; document.body.appendChild(t); setTimeout(() => t.remove(), 2200); }
-function sheet(title, label, cb, def, dd, withSrc) {
+function sheet(title, label, cb, def, dd, withSrc, neg) {
   const d = document.createElement("div"); d.className = "ov";
   d.innerHTML = `<div class="sh"><h2>${esc(title)}</h2><label>${esc(label)}</label><input id="sv" inputmode="decimal" dir="ltr" placeholder="0"><label>תאריך</label><input id="sd" type="date" dir="ltr" value="${dd || today()}">${withSrc ? `<label>מקור הנתון</label><select id="ss"><option>דוח חודשי של בית ההשקעות</option><option>דוח רבעוני</option><option>דוח שנתי</option><option>אתר או אפליקציה של הגוף המנהל</option><option value="est">הערכה אישית</option></select>` : ""}<button id="ok">אישור</button><button class="ghost" id="no">ביטול</button></div>`;
   document.body.appendChild(d);
   const c = () => d.remove(); d.onclick = e => { if (e.target === d) c(); };
   $("#no").onclick = c;
-  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || a < 0) return; const dt = $("#sd").value || today(), so = $("#ss") ? $("#ss").selectedOptions[0] : null, sv = so ? { l: so.text, e: so.value === "est" } : null; c(); await cb(a, dt, sv); };
+  $("#ok").onclick = async () => { const a = parseFloat($("#sv").value.replace(/,/g, "")); if (isNaN(a) || (a < 0 && !neg)) return; const dt = $("#sd").value || today(), so = $("#ss") ? $("#ss").selectedOptions[0] : null, sv = so ? { l: so.text, e: so.value === "est" } : null; c(); await cb(a, dt, sv); };
   if (def !== undefined) $("#sv").value = def; $("#sv").focus();
 }
 
@@ -239,7 +239,10 @@ const views = {
         const DY = { monthly: 35, quarterly: 100, yearly: 380 }, st = L.filter(x => { const c = x.report_cadence || "monthly"; return c !== "none" && (!x.hasVal || Date.now() - new Date(x.asOf) > DY[c] * 864e5); });
         if (st.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>דוחות לעדכון</h2>${st.slice(0, 6).map(x => `<div style="padding:10px 0;border-top:1px solid var(--line);cursor:pointer" onclick="S.tab='inv';S.sel='${x.id}';render()"><b>${esc(x.name)}</b> <span class="muted">· ${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון"}</span></div>`).join("")}</div>`);
         const fee = L.reduce((a, x) => a + annFee(x), 0);
-        if (fee > 0) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><div class="muted">דמי ניהול שנתיים משוערים</div><div class="n">${fmt(fee)}</div></div>`); }
+        if (fee > 0) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><div class="muted">דמי ניהול שנתיים משוערים</div><div class="n">${fmt(fee)}</div></div>`);
+        const tv = L.reduce((a, x) => a + x.val, 0);
+        if (tv > 0 && L.length > 1) { const top = [...L].sort((a, b) => b.val - a.val)[0], idx = L.filter(x => x.valuation_mode === "index").reduce((a, x) => a + x.val, 0), ni = new Set(L.map(x => x.institution_id).filter(Boolean)).size, hot = top.val / tv > 0.5;
+          $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>פיזור וסיכון</h2>${[["ההשקעה הגדולה ביותר", esc(top.name) + " · " + (top.val / tv * 100).toFixed(0) + "%", hot], ["צמוד ל-S&amp;P 500", (idx / tv * 100).toFixed(0) + "%", false], ["בתי השקעות", ni, false]].map(([l, v, w]) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)"><span class="muted">${l}</span><b${w ? ' style="color:var(--bad)"' : ""}>${v}</b></div>`).join("")}${hot ? '<div class="muted" style="margin-top:6px">יותר ממחצית ההון מרוכזת בהשקעה אחת.</div>' : ""}</div>`); } }
     } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
@@ -267,8 +270,9 @@ const views = {
     } catch (e) { $("#gl").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
   },
   tools() {
-    const t = S.tt || "calc", seg = `<div class="seg">${[["calc", "מחשבון"], ["mkt", "שוק"]].map(([k, l]) => `<button class="${t === k ? "on" : ""}" onclick="S.tt='${k}';render()">${l}</button>`).join("")}</div>`;
+    const t = S.tt || "calc", seg = `<div class="seg">${[["calc", "מחשבון"], ["fc", "תחזית"], ["mkt", "שוק"]].map(([k, l]) => `<button class="${t === k ? "on" : ""}" onclick="S.tt='${k}';render()">${l}</button>`).join("")}</div>`;
     if (t === "mkt") return market(seg);
+    if (t === "fc") return forecast(seg);
     const f = (id, l, v) => `<div style="flex:1"><label>${l}</label><input id="c_${id}" inputmode="decimal" dir="ltr" value="${v}" oninput="drawCalc()"></div>`;
     V(seg + `<div class="card"><h2>מחשבון ריבית דריבית</h2>
       <div class="row">${f("init", "סכום התחלתי (₪)", 0)}${f("mo", "הפקדה חודשית (₪)", 1000)}</div>
@@ -326,6 +330,7 @@ async function detail(id) {
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
     <button class="ghost" onclick="act('${id}','valuation')">עדכון שווי</button>
+    <button class="ghost" onclick="monthRet('${id}')">עדכון לפי תשואה חודשית</button>
     ${ok ? `<button class="ghost" onclick="fixDep('${id}')">עדכון סך ההפקדות</button>` : ""}
     <div class="card" style="margin-top:14px"><h2>היסטוריה</h2>${ev.length ? ev.map(row).join("") : '<div class="muted">אין עדיין תנועות.</div>'}
       ${ev.length ? '<div class="muted" style="margin-top:8px">הקשה על שורה לעריכת הסכום והתאריך.</div>' : ""}</div>
@@ -581,6 +586,34 @@ function drawInv() {
     gr.map((x, i) => `<div style="margin:20px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${PAL[i % 8]}"></span><b style="flex:1">${esc(x.k)}</b><b>${fmt(x.v)}</b><span class="muted" style="min-width:38px;text-align:end">${tot ? (x.v / tot * 100).toFixed(0) : 0}%</span></div>` +
       x.a.map(y => { const p = y.val - y.dep; return `<div class="card" style="border-inline-start:4px solid ${PAL[i % 8]};cursor:pointer;padding:14px 16px;margin-bottom:8px" onclick="S.sel='${y.id}';render()"><div style="display:flex;justify-content:space-between;gap:10px"><div><b>${esc(y.name)}</b><div class="muted">${esc(g === "inst" ? (y.asset_types && y.asset_types.name) || "" : (y.institutions && y.institutions.name) || "")} · ${y.owner_user_id ? esc(nm[y.owner_user_id] || "") : "משותף"}${g === "horizon" ? "" : " · " + (HZ[y.horizon] || "")}${y.est ? " · הערכה" : ""}</div></div><div style="text-align:end"><b>${fmt(y.val)}</b>${y.dep > 0 ? `<div class="muted" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${p >= 0 ? "+" : "−"}${fmt(Math.abs(p))} · ${(Math.abs(p) / y.dep * 100).toFixed(1)}%</div>` : '<div class="muted">אין נתוני הפקדות</div>'}</div></div></div>`; }).join("")).join("")
     : `<div class="muted" style="margin-top:16px">עדיין אין השקעות. הוסיפו את הראשונה.</div>`);
+}
+
+async function forecast(seg) {
+  V(seg + `<div id="fc" class="muted" style="padding:16px 0">טוען…</div>`);
+  const [L, R] = await Promise.all([loadAll(), rawData()]), tot = L.reduce((a, x) => a + x.val, 0), yr = Date.now() - 365 * 864e5;
+  const net = R.t.filter(e => new Date(e.occurred_on) > yr).reduce((a, e) => a + (e.kind === "deposit" ? 1 : -1) * Number(e.amount), 0);
+  S.fcd = { tot, mo: Math.max(0, Math.round(net / 12)), fee: tot ? L.reduce((a, x) => a + annFee(x), 0) / tot * 100 : 0 };
+  const fi = (id, l, v) => `<div style="flex:1"><label>${l}</label><input id="fc_${id}" inputmode="decimal" dir="ltr" value="${v}" oninput="drawFc()"></div>`;
+  if (!$("#fc")) return;
+  $("#fc").outerHTML = `<div class="card"><h2>תחזית הון</h2><div class="muted">מתחילים מההון הנוכחי (${fmt(tot)}) ומההפקדה החודשית הממוצעת שלכם ב-12 החודשים האחרונים.</div>
+    <div class="row" style="margin-top:8px">${fi("mo", "הפקדה חודשית (₪)", S.fcd.mo)}</div>
+    <div class="row">${fi("r1", "תשואה זהירה (%)", 4)}${fi("r2", "תשואה בסיס (%)", 6.5)}${fi("r3", "תשואה אופטימית (%)", 9)}</div>
+    <div class="muted">מנוכים דמי ניהול משוקללים של ${S.fcd.fee.toFixed(2)}%.</div></div><div id="fcr"></div>`;
+  drawFc();
+}
+function drawFc() {
+  const g = k => parseFloat($("#fc_" + k).value) || 0, d = S.fcd, rs = [g("r1"), g("r2"), g("r3")], mo = g("mo");
+  const sim = r => calc({ init: d.tot, mo, rate: r, yrs: 30, step: 0, lump: 0, lumpYr: 0 }, d.fee, "balance"), S3 = rs.map(sim), base = S3[1];
+  $("#fcr").innerHTML = `<div class="card"><h2>שווי צפוי</h2><div style="display:flex;padding:6px 0" class="muted"><span style="flex:1">בעוד</span><span style="flex:2;text-align:end">זהיר</span><span style="flex:2;text-align:end">בסיס</span><span style="flex:2;text-align:end">אופטימי</span></div>
+    ${[5, 10, 20, 30].map(y => `<div style="display:flex;padding:10px 0;border-top:1px solid var(--line)"><b style="flex:1">${y} שנים</b>${S3.map((r, i) => `<span style="flex:2;text-align:end;${i === 1 ? "font-weight:700" : ""}">${fmt(r[y].b)}</span>`).join("")}</div>`).join("")}
+    ${lines(base.map(x => x.b), base.map(x => x.d))}<div class="muted">קו מלא: תרחיש בסיס · מקווקו: הפקדות. תחזית תיאורטית, לא הבטחה.</div></div>`;
+}
+function monthRet(id) {
+  const x = S.cur;
+  sheet("תשואה חודשית שפורסמה", "אחוז, למשל 1.2 או -0.8", async (a, dt) => {
+    const r = await SB.from("valuations").insert({ investment_id: id, value: x.val * (1 + a / 100), as_of: dt, source: "public", source_label: "תשואה חודשית " + a + "% (נתון ציבורי)" });
+    toast(r.error ? r.error.message : "עודכן ✓"); render();
+  }, undefined, undefined, false, true);
 }
 
 boot();
