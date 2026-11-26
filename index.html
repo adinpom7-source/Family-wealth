@@ -159,18 +159,20 @@ async function joinHH() {
 }
 
 /* ---------- app shell ---------- */
-const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["tools","🧮","כלים"],["more","⚙️","עוד"]];
+const TABS = [["home","🏠","בית"],["inv","📈","השקעות"],["goals","🎯","מטרות"],["ins","🛡️","ביטוחים"],["tools","🧮","כלים"],["more","⚙️","עוד"]];
 function render() {
   const dark = document.documentElement.dataset.theme === "dark";
   $("#app").innerHTML = `
     <header><h1>${esc(S.m.households.name)}</h1>
-      <button class="ghost icon" onclick="toggleTheme()" aria-label="מצב כהה/בהיר">${dark ? "☀️" : "🌙"}</button></header>
+      <button class="ghost icon" onclick="toggleHide()" aria-label="הסתרת סכומים">${S.hide ? "🙈" : "👁"}</button><button class="ghost icon" onclick="toggleTheme()" aria-label="מצב כהה/בהיר">${dark ? "☀️" : "🌙"}</button></header>
     <main id="view"></main>
     <nav>${TABS.map(([k,i,l]) => `<button class="${S.tab===k?"on":""}" onclick="go('${k}')"><span class="i">${i}</span>${l}</button>`).join("")}</nav>`;
   views[S.tab]();
 }
-const go = t => { S.tab = t; S.sel = S.add = S.ed = null; S.gf = 0; render(); };
-const fmt = n => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(n || 0);
+const go = t => { S.tab = t; S.sel = S.add = S.ed = null; S.gf = 0; S.insf = 0; S.insEd = null; render(); };
+const fmt0 = n => new Intl.NumberFormat("he-IL", { style: "currency", currency: "ILS", maximumFractionDigits: 0 }).format(n || 0);
+try { S.hide = localStorage.getItem("hide") === "1"; } catch (e) {}
+const fmt = n => S.hide ? "₪ ••••" : fmt0(n);
 const today = () => new Date().toISOString().slice(0, 10);
 const V = h => ($("#view").innerHTML = h);
 const opt = (a, k, l) => (a || []).map(x => `<option value="${esc(x[k])}">${esc(x[l])}</option>`).join("");
@@ -245,6 +247,7 @@ const views = {
           $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>פיזור וסיכון</h2>${[["ההשקעה הגדולה ביותר", esc(top.name) + " · " + (top.val / tv * 100).toFixed(0) + "%", hot], ["צמוד ל-S&amp;P 500", (idx / tv * 100).toFixed(0) + "%", false], ["בתי השקעות", ni, false]].map(([l, v, w]) => `<div style="display:flex;justify-content:space-between;padding:8px 0;border-top:1px solid var(--line)"><span class="muted">${l}</span><b${w ? ' style="color:var(--bad)"' : ""}>${v}</b></div>`).join("")}${hot ? '<div class="muted" style="margin-top:6px">יותר ממחצית ההון מרוכזת בהשקעה אחת.</div>' : ""}</div>`); }
         if (f === "all") { const lb = await SB.from("liabilities").select("balance"), ld = (lb.data || []).reduce((a, x) => a + Number(x.balance), 0);
           if (ld > 0) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><div class="row" style="margin:0"><div style="flex:1"><div class="muted">התחייבויות</div><div class="n">${fmt(ld)}</div></div><div style="flex:1"><div class="muted">הון נקי</div><div class="n">${fmt(tv - ld)}</div></div></div></div>`); } }
+      homeIns(f);
     } catch (e) { V(`<div class="err">${esc(e.message)}</div>`); }
   },
   async inv() {
@@ -253,6 +256,14 @@ const views = {
     V(`<div id="ih" class="muted" style="padding:20px 0">טוען…</div>`);
     try { const [L, mm] = await Promise.all([loadAll(), SB.from("household_members").select("user_id,display_name")]); S.IL = L; S.mem = mm.data || []; if ($("#ih")) drawInv(); }
     catch (e) { $("#ih").innerHTML = `<div class="err">${esc(e.message)}</div>`; }
+  },
+  async ins() {
+    if (S.insf) return insForm();
+    V(`<div id="ib" class="muted" style="padding:20px 0">טוען…</div>`);
+    const [r, mem] = await Promise.all([SB.from("insurances").select("*").order("end_date"), members()]);
+    if (!$("#ib")) return;
+    if (r.error) { $("#ib").innerHTML = `<div class="card"><div class="err">${esc(r.error.message)}</div><div class="muted">כנראה צריך להריץ פעם אחת את פקודת ה-SQL של הביטוחים ב-Supabase.</div></div>`; return; }
+    S.insL = r.data; S.mem = mem; drawIns();
   },
   async goals() {
     if (S.gf) return goalForm();
@@ -639,6 +650,57 @@ function monthRet(id) {
     toast(r.error ? r.error.message : "עודכן ✓"); render();
   }, undefined, undefined, false, true);
 }
+
+const yearlyOf = x => x.premium ? (x.frequency === "monthly" ? 12 : 1) * Number(x.premium) : 0;
+function insStat(x) {
+  if (!x.end_date) return { t: "ללא תאריך", c: "var(--muted)" };
+  const n = Math.ceil((new Date(x.end_date) - Date.now()) / 864e5);
+  return n < 0 ? { t: "פג תוקף", c: "var(--bad)" } : n <= 30 ? { t: "עוד " + n + " ימים", c: "var(--bad)" } : n <= 60 ? { t: "עוד " + n + " ימים", c: "#D97706" } : { t: "עד " + x.end_date, c: "var(--muted)" };
+}
+function drawIns() {
+  const L = S.insL, yr = L.reduce((a, x) => a + yearlyOf(x), 0), nm = Object.fromEntries(S.mem.map(m => [m.user_id, m.display_name])), G = {};
+  L.forEach(x => (G[x.kind || "אחר"] = G[x.kind || "אחר"] || []).push(x));
+  const gr = Object.entries(G).map(([k, a]) => ({ k, a, y: a.reduce((s, x) => s + yearlyOf(x), 0) })).sort((a, b) => b.y - a.y);
+  $("#ib").innerHTML = `<div class="hero"><div class="lbl">עלות ביטוחים שנתית</div><div class="hbig">${fmt(yr)}</div><div class="chip">כ-${fmt(yr / 12)} לחודש</div><div class="sm">${L.length} פוליסות</div></div>
+    <button style="margin-top:12px" onclick="S.insf=1;S.insEd=null;render()">הוספת ביטוח</button>` +
+    (gr.map((g, i) => `<div style="margin:20px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${PAL[i % 8]}"></span><b style="flex:1">${esc(g.k)}</b><b>${fmt(g.y)}</b><span class="muted">לשנה</span></div>` +
+      g.a.map(x => { const st = insStat(x); return `<div class="card" style="border-inline-start:4px solid ${PAL[i % 8]};cursor:pointer;padding:14px 16px;margin-bottom:8px" onclick="S.insEd=S.insL.find(z=>z.id==='${x.id}');S.insf=1;render()">
+        <div style="display:flex;justify-content:space-between;gap:10px"><div><b>${esc(x.name)}</b><div class="muted">${esc(x.company || "")}${x.company ? " · " : ""}${x.owner_user_id ? esc(nm[x.owner_user_id] || "") : "משותף"}</div></div>
+        <div style="text-align:end"><b>${x.premium ? fmt(x.premium) : "—"}</b><div class="muted">${x.frequency === "monthly" ? "לחודש" : "לשנה"}</div></div></div>
+        <div style="margin-top:6px;font-size:14px;font-weight:600;color:${st.c}">${st.t}</div></div>`; }).join("")).join("") || `<div class="muted" style="margin-top:16px">עדיין אין ביטוחים. הוסיפו את הראשון.</div>`);
+}
+function insForm() {
+  const x = S.insEd || {}, dl = (id, a) => `<datalist id="${id}">${a.map(v => `<option value="${v}">`).join("")}</datalist>`;
+  V(`<button class="ghost" onclick="S.insf=0;S.insEd=null;render()">→ ביטול</button><div class="card" style="margin-top:12px"><h2>${S.insEd ? "עריכת ביטוח" : "ביטוח חדש"}</h2>
+    <label>שם הפוליסה</label><input id="i_n" value="${esc(x.name || "")}" placeholder="למשל ביטוח רכב">
+    <label>סוג</label><input id="i_k" list="dk" value="${esc(x.kind || "")}">${dl("dk", ["בריאות", "חיים", "רכב", "דירה", "אובדן כושר עבודה", "סיעודי", "נסיעות", "אחר"])}
+    <label>חברת הביטוח</label><input id="i_c" list="dc" value="${esc(x.company || "")}">${dl("dc", ["הראל", "מגדל", "הפניקס", "כלל", "מנורה", "הכשרה", "איילון", "ביטוח ישיר", "שלמה", "AIG", "שירביט", "ליברה"])}
+    <label>על שם</label><select id="i_o"><option value="">משותף</option>${opt(S.mem, "user_id", "display_name")}</select>
+    <div class="row"><div style="flex:1"><label>מחיר (₪)</label><input id="i_p" inputmode="decimal" dir="ltr" value="${x.premium == null ? "" : x.premium}"></div>
+    <div style="flex:1"><label>תשלום</label><select id="i_f"><option value="monthly">לחודש</option><option value="yearly">לשנה</option></select></div></div>
+    <div class="row"><div style="flex:1"><label>תחילת תוקף</label><input id="i_s" type="date" dir="ltr" value="${x.start_date || ""}"></div>
+    <div style="flex:1"><label>סיום תוקף / חידוש</label><input id="i_e" type="date" dir="ltr" value="${x.end_date || ""}"></div></div>
+    <label>הערות</label><input id="i_t" value="${esc(x.notes || "")}">
+    <button onclick="saveIns()">שמירה</button>${S.insEd ? `<button class="ghost" style="color:var(--bad)" onclick="delIns('${x.id}')">מחיקת הביטוח</button>` : ""}</div>`);
+  $("#i_o").value = x.owner_user_id || ""; $("#i_f").value = x.frequency || "monthly";
+}
+async function saveIns() {
+  const n = $("#i_n").value.trim(); if (!n) return alert("יש להזין שם לפוליסה");
+  const row = { name: n, kind: $("#i_k").value.trim() || null, company: $("#i_c").value.trim() || null, owner_user_id: $("#i_o").value || null,
+    premium: parseFloat($("#i_p").value.replace(/,/g, "")) || null, frequency: $("#i_f").value, start_date: $("#i_s").value || null, end_date: $("#i_e").value || null, notes: $("#i_t").value.trim() || null };
+  const r = S.insEd ? await SB.from("insurances").update(row).eq("id", S.insEd.id) : await SB.from("insurances").insert({ household_id: S.m.household_id, ...row });
+  if (r.error) return alert(r.error.message);
+  S.insf = 0; S.insEd = null; toast("נשמר ✓"); render();
+}
+async function delIns(id) { if (!confirm("למחוק את הביטוח?")) return; await SB.from("insurances").delete().eq("id", id); S.insf = 0; S.insEd = null; render(); }
+async function homeIns(f) {
+  if (f !== "all") return;
+  const r = await SB.from("insurances").select("id,name,company,end_date"); if (r.error || !$("#view")) return;
+  const due = (r.data || []).filter(x => x.end_date).map(x => ({ ...x, n: Math.ceil((new Date(x.end_date) - Date.now()) / 864e5) })).filter(x => x.n <= 45).sort((a, b) => a.n - b.n);
+  if (!due.length) return;
+  $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>ביטוחים לחידוש</h2>${due.slice(0, 6).map(x => `<div style="display:flex;justify-content:space-between;padding:10px 0;border-top:1px solid var(--line);cursor:pointer" onclick="S.tab='ins';render()"><span><b>${esc(x.name)}</b> <span class="muted">${esc(x.company || "")}</span></span><b style="color:var(--bad)">${x.n < 0 ? "פג תוקף" : x.n === 0 ? "היום" : "עוד " + x.n + " ימים"}</b></div>`).join("")}</div>`);
+}
+const toggleHide = () => { S.hide = !S.hide; try { localStorage.setItem("hide", S.hide ? "1" : "0"); } catch (e) {} render(); };
 
 boot();
 </script>
