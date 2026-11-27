@@ -65,6 +65,13 @@ body{background:linear-gradient(180deg,#D9E2FF 0,var(--bg) 340px) no-repeat var(
 :root[data-theme=dark] .hero{background:linear-gradient(135deg,#4338CA 0%,#0F766E 100%);box-shadow:none}
 button{background-image:linear-gradient(135deg,#4F46E5,#0D9488);color:#fff}
 nav{backdrop-filter:blur(12px)}
+/* spacing + floating nav */
+button{margin-top:10px}
+.seg{margin:14px 0}
+nav{inset-inline:12px;bottom:calc(10px + env(safe-area-inset-bottom));padding:6px;gap:4px;border:1px solid var(--line);border-radius:26px;box-shadow:0 10px 30px #1e1b4b26;background:color-mix(in srgb,var(--card) 94%,transparent)}
+nav button{margin:0;padding:8px 2px;border-radius:20px}
+nav button.on{background:color-mix(in srgb,var(--accent) 16%,transparent)}
+main{padding-bottom:120px}
 </style>
 <link rel="preconnect" href="https://fonts.googleapis.com"><link rel="preconnect" href="https://fonts.gstatic.com" crossorigin><link href="https://fonts.googleapis.com/css2?family=Heebo:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 </head>
@@ -330,6 +337,7 @@ async function detail(id) {
   let xr = null;
   if (ok) { const cf = (tr.data || []).map(e => ({ d: new Date(e.occurred_on).getTime(), a: (e.kind === "deposit" ? -1 : 1) * Number(e.amount) })).sort((a, b) => a.d - b.d);
     if (cf.length && Date.now() - cf[0].d > 60 * 864e5) { cf.push({ d: Date.now(), a: x.val }); xr = xirr(cf); } }
+  const cf = x.fee_pct ? cumFee(x) : 0, pb = p + cf;
   const m = (l, v, c) => `<div class="card" style="margin:0"><div class="muted">${l}</div><div class="n"${c ? ` style="color:var(${c})"` : ""}>${v}</div></div>`;
   const owner = x.owner_user_id ? ((mem.find(u => u.user_id === x.owner_user_id) || {}).display_name || "") : "משותף";
   const tags = [x.asset_types && x.asset_types.name, x.institutions && x.institutions.name, owner, HZ[x.horizon], x.track].filter(Boolean).map(esc).join(" · ");
@@ -342,7 +350,8 @@ async function detail(id) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
       ${m("הפקדות נטו", fmt(x.dep))}${m("רווח / הפסד", ok ? sg + fmt(Math.abs(p)) : "—", ok ? col : "")}
       ${m("תשואה כוללת", ok ? sg + Math.abs(pc).toFixed(1) + "%" : "—", ok ? col : "")}${m("תשואה שנתית משוערת", xr == null ? "—" : (xr * 100).toFixed(1) + "%", xr != null && xr < 0 ? "--bad" : "")}
-      ${m("דמי ניהול בשנה", x.fee_pct ? fmt(annFee(x)) : "—")}${m("תחילת השקעה", x.started_on ? esc(x.started_on) : "—")}</div>
+      ${x.fee_pct ? m("דמי ניהול בשנה", fmt(annFee(x))) : `<div class="card" style="margin:0;cursor:pointer" onclick="S.ed=S.cur;S.sel=null;S.add=1;render()"><div class="muted">דמי ניהול</div><div class="n" style="font-size:16px">לא הוגדרו, הקישו להגדרה</div></div>`}
+      ${m("דמי ניהול עד היום (משוער)", x.fee_pct ? fmt(cf) : "—")}${m("רווח לפני דמי ניהול", x.fee_pct && ok ? (pb >= 0 ? "+" : "−") + fmt(Math.abs(pb)) : "—")}${m("תחילת השקעה", x.started_on ? esc(x.started_on) : "—")}</div>
     <div class="card" id="hist"></div>
     <button onclick="act('${id}','deposit')">הפקדה</button>
     <button class="ghost" onclick="act('${id}','withdrawal')">משיכה</button>
@@ -476,10 +485,9 @@ function series(L, R, g) {
   return ends.map(e => {
     let tv = 0, td = 0;
     L.forEach(x => {
-      const dep = t.filter(r => r.investment_id === x.id && r.occurred_on <= e).reduce((a, r) => a + (r.kind === "deposit" ? 1 : -1) * Number(r.amount), 0);
-      const vs = v.filter(r => r.investment_id === x.id && r.as_of <= e).sort((a, b) => b.as_of.localeCompare(a.as_of))[0];
-      const aft = vs ? t.filter(r => r.investment_id === x.id && r.occurred_on > vs.as_of && r.occurred_on <= e).reduce((a, r) => a + (r.kind === "deposit" ? 1 : -1) * Number(r.amount), 0) : 0;
-      const k = x.fxk || 1; td += dep * k; tv += (vs ? Number(vs.value) + aft : dep) * k;
+      const tx = t.filter(r => r.investment_id === x.id), vv = v.filter(r => r.investment_id === x.id), k = x.fxk || 1;
+      td += tx.filter(r => r.occurred_on <= e).reduce((a, r) => a + (r.kind === "deposit" ? 1 : -1) * Number(r.amount), 0) * k;
+      tv += invValue(x, tx, vv, e) * k;
     });
     return { d: e, v: tv, dep: td };
   });
@@ -500,7 +508,7 @@ function drawHist0() {
   el.innerHTML = `<h2>התפתחות ההון</h2><div style="display:flex;gap:12px;margin-bottom:6px">${stat("רווח בחודש האחרון", m[n - 2])}${stat("רווח ב־12 חודשים", yp)}</div>${seg}
     <svg viewBox="0 0 ${W} ${H}" dir="ltr" style="width:100%;display:block" onclick="pickPt(event)"><path d="${path("dep")}" fill="none" stroke="var(--muted)" stroke-width="2" stroke-dasharray="4 4"/>
     <path d="${path("v")}" fill="none" stroke="var(--accent)" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"/><circle id="dot" r="5" fill="var(--accent)"/></svg>
-    <div class="muted" style="margin:6px 0">קו מלא: שווי · מקווקו: הפקדות נטו. הקישו על הגרף לפרטים.</div><div id="tip"></div>`;
+    <div class="muted" style="margin:6px 0">קו מלא: שווי · מקווקו: הפקדות נטו. בין עדכוני שווי זו הערכה${S.L2.some(x => x.valuation_mode === "index") ? " לפי מדד ה-S&P" : ""}${S.L2.some(x => x.fee_pct) ? ", כולל דמי ניהול" : ""}. הקישו על הגרף לפרטים.</div><div id="tip"></div>`;
   showPt(ser.length - 1);
 }
 function pickPt(e) { const r = e.currentTarget.getBoundingClientRect(); showPt(Math.max(0, Math.min(S.ser.length - 1, Math.round((e.clientX - r.left) / r.width * (S.ser.length - 1))))); }
@@ -604,7 +612,7 @@ function drawInv() {
   const G = {}; L.forEach(x => (G[key(x)] = G[key(x)] || []).push(x));
   const gr = Object.entries(G).map(([k, a]) => ({ k, a, v: a.reduce((s, x) => s + x.val, 0) })).sort((a, b) => b.v - a.v), tot = gr.reduce((s, x) => s + x.v, 0);
   const seg = `<div class="seg">${[["type", "לפי סוג"], ["horizon", "לפי ייעוד וטווח"], ["inst", "לפי בית השקעות"]].map(([k, l]) => `<button class="${g === k ? "on" : ""}" onclick="setIg('${k}')">${l}</button>`).join("")}</div>`;
-  $("#ih").innerHTML = `<button onclick="S.add=1;render()">הוספת השקעה</button>${seg}` + (L.length ? `
+  $("#ih").innerHTML = `<button style="margin-bottom:12px" onclick="S.add=1;render()">הוספת השקעה</button>${seg}` + (L.length ? `
     <div style="display:flex;height:14px;border-radius:7px;overflow:hidden;gap:2px;margin:6px 0 4px">${gr.map((x, i) => `<i style="flex:${Math.max(x.v, 0.01)};background:${PAL[i % 8]}"></i>`).join("")}</div>` +
     gr.map((x, i) => `<div style="margin:20px 0 8px;display:flex;align-items:center;gap:8px"><span style="width:10px;height:10px;border-radius:3px;background:${PAL[i % 8]}"></span><b style="flex:1">${esc(x.k)}</b><b>${fmt(x.v)}</b><span class="muted" style="min-width:38px;text-align:end">${tot ? (x.v / tot * 100).toFixed(0) : 0}%</span></div>` +
       x.a.map(y => { const p = y.val - y.dep; return `<div class="card" style="border-inline-start:4px solid ${PAL[i % 8]};cursor:pointer;padding:14px 16px;margin-bottom:8px" onclick="S.sel='${y.id}';render()"><div style="display:flex;justify-content:space-between;gap:10px"><div><b>${esc(y.name)}</b><div class="muted">${esc(g === "inst" ? (y.asset_types && y.asset_types.name) || "" : (y.institutions && y.institutions.name) || "")} · ${y.owner_user_id ? esc(nm[y.owner_user_id] || "") : "משותף"}${g === "horizon" ? "" : " · " + (HZ[y.horizon] || "")}${y.est ? " · הערכה" : ""}${y.cur && y.cur !== "ILS" ? " · " + fmtC(y.valC, y.cur) : ""}</div></div><div style="text-align:end"><b>${fmt(y.val)}</b>${y.dep > 0 ? `<div class="muted" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${p >= 0 ? "+" : "−"}${fmt(Math.abs(p))} · ${(Math.abs(p) / y.dep * 100).toFixed(1)}%</div>` : '<div class="muted">אין נתוני הפקדות</div>'}</div></div></div>`; }).join("")).join("")
@@ -715,6 +723,28 @@ async function loadFx() {
   S.fx = { USD: null, EUR: null };
   try { const q = async c => Number((await (await fetch(`https://api.frankfurter.dev/v2/providers/boi/rate/${c}/ils`)).json()).rate); const [u, e] = await Promise.all([q("usd"), q("eur")]); S.fx = { USD: u || null, EUR: e || null }; } catch (e) {}
   if (!S.fx.USD && S.mkU && S.mkU.length) S.fx.USD = S.mkU[S.mkU.length - 1][1];
+}
+
+const cumFee = x => { const f = (x.fee_pct || 0) / 100, y = Math.max(0, (Date.now() - new Date(x.started_on || x.asOf || Date.now())) / 31557600000); return x.fee_basis === "profit" ? Math.max(0, x.val - x.dep) * f : (x.val + x.dep) / 2 * f * y; };
+function invValue(x, t, v, e) {
+  const tx = t.map(r => ({ d: r.occurred_on, a: (r.kind === "deposit" ? 1 : -1) * Number(r.amount) })).sort((p, q) => p.d.localeCompare(q.d));
+  const A = v.map(r => ({ d: r.as_of, a: Number(r.value) })).sort((p, q) => p.d.localeCompare(q.d));
+  if (tx.length && (!A.length || tx[0].d < A[0].d)) A.unshift({ d: tx[0].d, a: tx.filter(r => r.d === tx[0].d).reduce((s, r) => s + r.a, 0) });
+  if (!A.length || e < A[0].d) return 0;
+  const dy = (a, b) => (new Date(b) - new Date(a)) / 864e5, fr = (x.fee_pct || 0) / 100;
+  const Rf = (a, b) => {
+    if (!(x.valuation_mode === "index" && S.mk)) return 1;
+    const i0 = idxAt(a), i1 = idxAt(b); if (!i0 || !i1) return 1;
+    let r = i1 / i0;
+    if ((x.currency || "ILS") === "ILS" && !x.fx_hedged) { const u0 = fxAt(a), u1 = fxAt(b); if (u0 && u1) r *= u1 / u0; }
+    return x.fee_basis === "profit" ? (r > 1 ? 1 + (r - 1) * (1 - fr) : r) : r * (1 - fr * dy(a, b) / 365.25);
+  };
+  const M = (an, to) => an.a * Rf(an.d, to) + tx.filter(r => r.d > an.d && r.d <= to).reduce((s, r) => s + r.a * Rf(r.d, to), 0);
+  let i = A.length - 1; while (i > 0 && A[i].d > e) i--;
+  const a = A[i], b = A[i + 1];
+  if (!b) return M(a, e);
+  const m = M(a, b.d), c = m > 0 && b.a > 0 ? b.a / m : 1, tau = dy(a.d, b.d) > 0 ? dy(a.d, e) / dy(a.d, b.d) : 0;
+  return M(a, e) * Math.pow(c, tau);
 }
 
 boot();
