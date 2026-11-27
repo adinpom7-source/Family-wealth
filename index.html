@@ -247,7 +247,7 @@ const views = {
           <div class="card"><div class="muted">רווח / הפסד</div><div class="n" style="color:var(${p >= 0 ? "--accent" : "--bad"})">${fmt(p)}</div></div></div>
         ${items.length ? `<div class="card"><h2>חלוקה לפי סוג</h2>${donut(items)}</div>` : `<div class="card muted">עדיין אין השקעות. הוסיפו את הראשונה בלשונית "השקעות".</div>`}`);
       if (miss.length) $(".hero").insertAdjacentHTML("afterend", `<div class="card"><div class="muted">${miss.length} השקעות ללא סכום הפקדות, ולכן הרווח שלהן לא נכלל בחישוב. הקישו כדי להשלים:</div>${miss.slice(0, 6).map(x => `<div style="padding:10px 0;border-top:1px solid var(--line);cursor:pointer" onclick="S.tab='inv';S.sel='${x.id}';render()"><b>${esc(x.name)}</b></div>`).join("")}</div>`);
-      if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist();
+      if (L.length) { $("#view").insertAdjacentHTML("beforeend", '<div class="card" id="hist"><div class="muted">טוען גרף…</div></div>'); S.L2 = L; S.R = await rawData(); drawHist(); homeAlerts(L, f);
         const DY = { monthly: 35, quarterly: 100, yearly: 380 }, st = L.filter(x => { const c = x.report_cadence || "monthly"; return c !== "none" && (!x.hasVal || Date.now() - new Date(x.asOf) > DY[c] * 864e5); });
         if (st.length) $("#view").insertAdjacentHTML("beforeend", `<div class="card"><h2>דוחות לעדכון</h2>${st.slice(0, 6).map(x => `<div style="padding:10px 0;border-top:1px solid var(--line);cursor:pointer" onclick="S.tab='inv';S.sel='${x.id}';render()"><b>${esc(x.name)}</b> <span class="muted">· ${x.hasVal ? "עודכן " + esc(x.asOf) : "ללא עדכון"}</span></div>`).join("")}</div>`);
         const fee = L.reduce((a, x) => a + annFee(x), 0);
@@ -309,8 +309,8 @@ const views = {
   more() {
     V(`<div class="card"><h2>שלום ${esc(S.m.display_name)}</h2><div class="muted">קוד להצטרפות בן/בת הזוג:</div>
       <div class="code">${esc(S.m.households.join_code)}</div></div>
-      <div id="liab"></div><div class="card"><button class="ghost" onclick="exportCsv()">ייצוא נתונים ל-CSV (נפתח ב-Excel)</button><button class="ghost" onclick="signOut()">יציאה</button></div>`);
-    drawLiab();
+      <div id="alloc"></div><div id="liab"></div><div class="card"><button class="ghost" onclick="exportCsv()">ייצוא נתונים ל-CSV (נפתח ב-Excel)</button><button class="ghost" onclick="signOut()">יציאה</button></div>`);
+    drawLiab(); drawAlloc();
   }
 };
 
@@ -745,6 +745,44 @@ function invValue(x, t, v, e) {
   if (!b) return M(a, e);
   const m = M(a, b.d), c = m > 0 && b.a > 0 ? b.a / m : 1, tau = dy(a.d, b.d) > 0 ? dy(a.d, e) / dy(a.d, b.d) : 0;
   return M(a, e) * Math.pow(c, tau);
+}
+
+async function homeAlerts(L, f) {
+  if (f !== "all") return;
+  const A = [], tv = L.reduce((a, x) => a + x.val, 0), push = (c, t) => A.push({ c, t });
+  try {
+    const [g, at, ty] = await Promise.all([SB.from("goals").select("name,target_amount,goal_investments(investment_id,share_pct)"), SB.from("allocation_targets").select("type_id,pct"), SB.from("asset_types").select("id,name")]);
+    const by = Object.fromEntries(L.map(x => [x.id, x]));
+    (g.data || []).forEach(o => { const cur = o.goal_investments.reduce((a, l) => a + (by[l.investment_id] ? by[l.investment_id].val * l.share_pct / 100 : 0), 0), pc = cur / o.target_amount * 100;
+      if (pc >= 100) push("var(--accent)", `🎉 הגעתם ליעד "${o.name}"`); else if (pc >= 90) push("#D97706", `קרובים ליעד "${o.name}": ${pc.toFixed(0)}%`); });
+    if (!at.error && tv > 0) { const nm = Object.fromEntries((ty.data || []).map(t => [t.id, t.name]));
+      (at.data || []).forEach(t => { const act = L.filter(x => x.type_id === t.type_id).reduce((a, x) => a + x.val, 0) / tv * 100; if (Math.abs(act - t.pct) > 5) push("#D97706", `${nm[t.type_id] || "סוג"}: בפועל ${act.toFixed(0)}% לעומת יעד ${Number(t.pct).toFixed(0)}%`); }); }
+  } catch (e) {}
+  const m = S.R ? series(L, S.R, "m") : [], n = m.length;
+  if (n >= 2) { const a = m[n - 1], b = m[n - 2];
+    if (b.v > 0) { const ch = ((a.v - a.dep) - (b.v - b.dep)) / b.v * 100;
+      if (ch <= -5) push("var(--bad)", `ירידה של ${Math.abs(ch).toFixed(1)}% בשווי מאז סוף החודש הקודם, לא כולל הפקדות`);
+      else if (ch >= 5) push("var(--accent)", `עלייה של ${ch.toFixed(1)}% בשווי מאז סוף החודש הקודם, לא כולל הפקדות`); } }
+  L.filter(x => (x.fee_pct || 0) >= 1).forEach(x => push("#D97706", `דמי ניהול גבוהים: ${x.name} (${x.fee_pct}%)`));
+  if (L.some(x => x.valuation_mode === "index") && S.mkMeta && Date.now() - new Date(S.mkMeta.updated) > 4 * 864e5) push("#D97706", "נתוני המדד לא התעדכנו כבר כמה ימים, ההערכות עשויות להיות מיושנות");
+  if (!A.length || !$(".hero")) return;
+  $(".hero").insertAdjacentHTML("afterend", `<div class="card"><h2>התראות</h2>${A.slice(0, 6).map(a => `<div style="display:flex;gap:10px;align-items:center;padding:9px 0;border-top:1px solid var(--line)"><span style="width:9px;height:9px;border-radius:50%;background:${a.c};flex:none"></span><span>${esc(a.t)}</span></div>`).join("")}</div>`);
+}
+async function drawAlloc() {
+  const el = $("#alloc"); if (!el) return;
+  const [ty, at] = await Promise.all([SB.from("asset_types").select("id,name").order("name"), SB.from("allocation_targets").select("type_id,pct")]);
+  if (!$("#alloc") || ty.error) return;
+  if (at.error) { el.innerHTML = `<div class="card"><h2>יעד חלוקה</h2><div class="muted">כדי להפעיל, צריך להריץ פעם אחת את פקודת ה-SQL של יעד החלוקה ב-Supabase.</div></div>`; return; }
+  const cur = Object.fromEntries((at.data || []).map(t => [t.type_id, t.pct]));
+  el.innerHTML = `<div class="card"><h2>יעד חלוקה</h2><div class="muted">איזה אחוז מההון תרצו בכל סוג השקעה. תופיע התראה כשהפער גדול מ-5 נקודות אחוז.</div>
+    ${ty.data.map(t => `<div style="display:flex;align-items:center;gap:10px;padding:6px 0"><span style="flex:1">${esc(t.name)}</span><input class="al" data-id="${t.id}" inputmode="decimal" dir="ltr" style="width:90px;margin:0" value="${cur[t.id] ?? ""}" placeholder="%"></div>`).join("") || '<div class="muted">אין עדיין סוגי השקעה.</div>'}
+    <button class="ghost" onclick="saveAlloc()">שמירת יעד חלוקה</button></div>`;
+}
+async function saveAlloc() {
+  const rows = [...document.querySelectorAll(".al")].map(i => ({ household_id: S.m.household_id, type_id: i.dataset.id, pct: parseFloat(i.value) })).filter(r => r.pct > 0), sum = rows.reduce((a, r) => a + r.pct, 0);
+  await SB.from("allocation_targets").delete().eq("household_id", S.m.household_id);
+  const r = rows.length ? await SB.from("allocation_targets").insert(rows) : {};
+  toast(r.error ? r.error.message : rows.length && sum !== 100 ? `נשמר. שימו לב: הסכום הוא ${sum}% ולא 100%` : "נשמר ✓");
 }
 
 boot();
