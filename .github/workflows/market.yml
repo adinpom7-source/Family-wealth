@@ -10,28 +10,33 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Fetch S&P 500
+      - name: Fetch market data
         run: |
           python3 - <<'PY'
           import csv, io, json, datetime, urllib.request
           def get(u):
               r = urllib.request.Request(u, headers={"User-Agent": "Mozilla/5.0"})
               return urllib.request.urlopen(r, timeout=30).read().decode()
-          def stooq():
-              rows = csv.DictReader(io.StringIO(get("https://stooq.com/q/d/l/?s=%5Espx&i=d")))
+          def stooq(sym):
+              rows = csv.DictReader(io.StringIO(get("https://stooq.com/q/d/l/?s=" + sym + "&i=d")))
               return [[r["Date"], float(r["Close"])] for r in rows if r.get("Close")]
-          def yahoo():
-              d = json.loads(get("https://query1.finance.yahoo.com/v8/finance/chart/%5EGSPC?range=10y&interval=1d"))["chart"]["result"][0]
+          def yahoo(sym):
+              d = json.loads(get("https://query1.finance.yahoo.com/v8/finance/chart/" + sym + "?range=10y&interval=1d"))["chart"]["result"][0]
               return [[datetime.datetime.utcfromtimestamp(t).strftime("%Y-%m-%d"), c] for t, c in zip(d["timestamp"], d["indicators"]["quote"][0]["close"]) if c]
-          s = []
-          for f in (stooq, yahoo):
-              try:
-                  s = f()
-                  if len(s) > 100: break
-              except Exception as e:
-                  print(f.__name__, "failed:", e)
-          if len(s) < 100: raise SystemExit("no data")
-          json.dump({"updated": datetime.datetime.utcnow().isoformat() + "Z", "series": {"SPX": s[-3000:]}}, open("market.json", "w"))
+          def fetch(stq, yh, need):
+              s = []
+              for f, sym in ((stooq, stq), (yahoo, yh)):
+                  try:
+                      s = f(sym)
+                      if len(s) > 100: return s[-3000:]
+                  except Exception as e:
+                      print(sym, "failed:", e)
+              if need: raise SystemExit("no data for " + stq)
+              return []
+          out = {"SPX": fetch("%5Espx", "%5EGSPC", True),
+                 "USDILS": fetch("usdils", "USDILS%3DX", False),
+                 "EURILS": fetch("eurils", "EURILS%3DX", False)}
+          json.dump({"updated": datetime.datetime.utcnow().isoformat() + "Z", "series": out}, open("market.json", "w"))
           PY
       - name: Save
         run: |
